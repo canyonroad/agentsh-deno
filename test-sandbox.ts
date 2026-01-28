@@ -106,7 +106,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 7: session creation
   {
     console.log("\n=== Test 7: session creation ===");
-    const stdout = (await sandbox.sh`agentsh session create --workspace /home/user --json`.text()).trim();
+    const stdout = (await sandbox.sh`agentsh session create --workspace /app --json`.text()).trim();
     try {
       const json: Record<string, unknown> = JSON.parse(stdout);
       if ("id" in json && typeof json.id === "string" && json.id.length > 0) {

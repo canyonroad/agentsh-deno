@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     // -----------------------------------------------------------------------
     console.log("Creating agentsh session...");
     const sessionOutput =
-      await sandbox.sh`agentsh session create --workspace /home/user --json`.text();
+      await sandbox.sh`agentsh session create --workspace /app --json`.text();
     const sessionData: SessionCreateResponse = JSON.parse(
       sessionOutput.trim(),
     );

@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     // 1. Create an agentsh session
     // -----------------------------------------------------------------------
     console.log("\n=== Creating agentsh session ===\n");
-    const sessionText = await sandbox.sh`agentsh session create --workspace /home/user --json`.text();
+    const sessionText = await sandbox.sh`agentsh session create --workspace /app --json`.text();
     const sessionOutput: SessionCreateOutput = JSON.parse(sessionText.trim());
     const sessionId: string = sessionOutput.id;
     console.log(`Session ID: ${sessionId}`);
