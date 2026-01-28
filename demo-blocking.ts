@@ -5,6 +5,9 @@
  * Creates a sandbox with agentsh installed, starts a session, and exercises
  * various command categories to show which are allowed and which are blocked
  * by the default security policy.
+ *
+ * Uses the agentsh HTTP exec API directly (POST /api/v1/sessions/:id/exec)
+ * to avoid shell shim interference with the agentsh CLI.
  */
 
 import { createAgentshSandbox } from "./setup.ts";
@@ -15,6 +18,25 @@ import { createAgentshSandbox } from "./setup.ts";
 
 interface SessionCreateOutput {
   id: string;
+}
+
+interface ExecResponse {
+  result?: {
+    exit_code?: number;
+    stdout?: string;
+    stderr?: string;
+    error?: {
+      code?: string;
+      message?: string;
+      policy_rule?: string;
+    };
+  };
+  guidance?: {
+    status?: string;
+    blocked?: boolean;
+    reason?: string;
+    policy_rule?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -34,30 +56,65 @@ async function main(): Promise<void> {
     const sessionId: string = sessionOutput.id;
     console.log(`Session ID: ${sessionId}`);
 
+    // Brief pause to let the server fully initialize the session
+    await new Promise((r) => setTimeout(r, 1500));
+
     // -----------------------------------------------------------------------
-    // 2. Helper to run a command via agentsh exec and report the outcome
+    // 2. Helper to run a command via the agentsh exec HTTP API
     // -----------------------------------------------------------------------
+    const apiBase = "http://127.0.0.1:18080";
+
     async function runAgentsh(
       description: string,
       command: string,
       args: string[],
     ): Promise<void> {
-      const payload = JSON.stringify({ command, args });
       console.log(`  ${description}: ${command} ${args.join(" ")}`);
+
+      const payload = JSON.stringify({ command, args });
+      const escapedPayload = payload.replace(/'/g, "'\\''");
+
+      await sandbox.fs.writeTextFile(
+        "/tmp/exec-cmd.sh",
+        `#!/bin/sh
+curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
+  -H "Content-Type: application/json" \
+  --connect-timeout 10 \
+  --max-time 30 \
+  -d '${escapedPayload}' \
+  -o /tmp/exec-result.json 2>/dev/null
+`,
+      );
+
+      await sandbox.sh`/bin/sh /tmp/exec-cmd.sh`.noThrow().result();
+
+      let output: string;
       try {
-        const result = await sandbox.sh`agentsh exec ${sessionId} --json ${payload} 2>&1`.result();
-        console.log(`    -> ALLOWED (exit: ${result.status.code})`);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("denied by policy")) {
-          const ruleMatch = message.match(/rule[:\s]+"?([^"|\n]+)"?/i)
-            ?? message.match(/policy rule[:\s]+"?([^"|\n]+)"?/i)
-            ?? message.match(/"rule_name"[:\s]+"?([^"|\n]+)"?/i);
-          const ruleName = ruleMatch ? ruleMatch[1].trim() : "unknown";
-          console.log(`    -> BLOCKED by policy rule: ${ruleName}`);
+        output = await sandbox.fs.readTextFile("/tmp/exec-result.json");
+      } catch {
+        console.log("    -> ERROR: no response from API");
+        return;
+      }
+
+      try {
+        const json: ExecResponse = JSON.parse(output.trim());
+
+        if (json.result?.error?.code === "E_POLICY_DENIED") {
+          const rule = json.result.error.policy_rule ?? "unknown";
+          console.log(`    -> BLOCKED by policy rule: ${rule}`);
+        } else if (json.result?.exit_code === 0) {
+          const stdout = json.result?.stdout?.trim();
+          const detail = stdout ? ` (output: ${stdout.slice(0, 80)})` : "";
+          console.log(`    -> ALLOWED (exit: 0)${detail}`);
         } else {
-          console.log(`    -> BLOCKED (non-policy error): ${message.slice(0, 200)}`);
+          const reason = json.result?.stderr?.trim() ??
+            json.guidance?.reason ?? "unknown error";
+          console.log(
+            `    -> ALLOWED (exit: ${json.result?.exit_code ?? "?"}): ${reason.slice(0, 100)}`,
+          );
         }
+      } catch {
+        console.log(`    -> ERROR: failed to parse response: ${output.slice(0, 200)}`);
       }
     }
 
@@ -67,33 +124,31 @@ async function main(): Promise<void> {
     console.log("\n=== ALLOWED: Safe Commands ===\n");
     await runAgentsh("Echo", "/bin/echo", ["Hello"]);
     await runAgentsh("Print working directory", "/bin/pwd", []);
-    await runAgentsh("List directory", "/bin/ls", ["/home"]);
+    await runAgentsh("List directory", "/bin/ls", ["/tmp"]);
     await runAgentsh("Date", "/bin/date", []);
-    await runAgentsh("Python3 one-liner", "/usr/bin/python3", ["-c", "print(1)"]);
-    await runAgentsh("Git version", "/usr/bin/git", ["--version"]);
 
     // -----------------------------------------------------------------------
     // 4. BLOCKED — Privilege escalation
     // -----------------------------------------------------------------------
     console.log("\n=== BLOCKED: Privilege Escalation ===\n");
-    await runAgentsh("Sudo", "/usr/bin/sudo", ["whoami"]);
-    await runAgentsh("Su", "/bin/su", ["-"]);
-    await runAgentsh("Chroot", "/usr/sbin/chroot", ["/"]);
+    await runAgentsh("Sudo", "sudo", ["whoami"]);
+    await runAgentsh("Su", "su", ["-"]);
+    await runAgentsh("Chroot", "chroot", ["/"]);
 
     // -----------------------------------------------------------------------
     // 5. BLOCKED — Network tools
     // -----------------------------------------------------------------------
     console.log("\n=== BLOCKED: Network Tools ===\n");
-    await runAgentsh("SSH", "/usr/bin/ssh", ["localhost"]);
-    await runAgentsh("Netcat", "/bin/nc", ["-h"]);
+    await runAgentsh("SSH", "ssh", ["localhost"]);
+    await runAgentsh("Netcat", "nc", ["-h"]);
 
     // -----------------------------------------------------------------------
     // 6. BLOCKED — System commands
     // -----------------------------------------------------------------------
     console.log("\n=== BLOCKED: System Commands ===\n");
-    await runAgentsh("Kill", "/bin/kill", ["-9", "1"]);
-    await runAgentsh("Shutdown", "/sbin/shutdown", ["now"]);
-    await runAgentsh("Systemctl", "/usr/bin/systemctl", ["status"]);
+    await runAgentsh("Kill", "kill", ["-9", "1"]);
+    await runAgentsh("Shutdown", "shutdown", ["now"]);
+    await runAgentsh("Systemctl", "systemctl", ["status"]);
 
     // -----------------------------------------------------------------------
     // 7. BLOCKED — Recursive delete
@@ -104,8 +159,8 @@ async function main(): Promise<void> {
     await sandbox.sh`mkdir -p /tmp/test && touch /tmp/test/file.txt`;
     console.log("  (created /tmp/test/file.txt for testing)");
 
-    await runAgentsh("rm -rf (force recursive)", "/bin/rm", ["-rf", "/tmp/test"]);
-    await runAgentsh("rm -r (recursive)", "/bin/rm", ["-r", "/tmp/test"]);
+    await runAgentsh("rm -rf (force recursive)", "rm", ["-rf", "/tmp/test"]);
+    await runAgentsh("rm -r (recursive)", "rm", ["-r", "/tmp/test"]);
 
     // -----------------------------------------------------------------------
     // 8. ALLOWED — Single file delete
