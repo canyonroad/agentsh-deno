@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@deno/sandbox": "jsr:@deno/sandbox"
+  },
+  "tasks": {
+    "demo:blocking": "deno run --allow-net --allow-env --allow-read demo-blocking.ts",
+    "demo:network": "deno run --allow-net --allow-env --allow-read demo-network.ts",
+    "test": "deno run --allow-net --allow-env --allow-read test-sandbox.ts"
+  }
+}
