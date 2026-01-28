@@ -40,8 +40,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 1: agentsh installation
   {
     console.log("\n=== Test 1: agentsh installation ===");
-    const result = await sandbox.sh`agentsh --version`;
-    const stdout = result.stdout?.trim() ?? "";
+    const stdout = (await sandbox.sh`agentsh --version`.text()).trim();
     if (stdout.includes("agentsh")) {
       pass("agentsh installation", stdout);
     } else {
@@ -52,8 +51,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 2: server health
   {
     console.log("\n=== Test 2: server health ===");
-    const result = await sandbox.sh`curl -s http://127.0.0.1:18080/health`;
-    const stdout = result.stdout?.trim() ?? "";
+    const stdout = (await sandbox.sh`curl -s http://127.0.0.1:18080/health`.text()).trim();
     if (stdout === "ok") {
       pass("server health", stdout);
     } else {
@@ -64,8 +62,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 3: policy file
   {
     console.log("\n=== Test 3: policy file ===");
-    const result = await sandbox.sh`head -5 /etc/agentsh/policies/default.yaml`;
-    const stdout = result.stdout ?? "";
+    const stdout = await sandbox.sh`head -5 /etc/agentsh/policies/default.yaml`.text();
     if (stdout.includes("version")) {
       pass("policy file", "contains 'version'");
     } else {
@@ -76,8 +73,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 4: config file
   {
     console.log("\n=== Test 4: config file ===");
-    const result = await sandbox.sh`head -5 /etc/agentsh/config.yaml`;
-    const stdout = result.stdout ?? "";
+    const stdout = await sandbox.sh`head -5 /etc/agentsh/config.yaml`.text();
     if (stdout.includes("server")) {
       pass("config file", "contains 'server'");
     } else {
@@ -88,8 +84,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 5: shell shim
   {
     console.log("\n=== Test 5: shell shim ===");
-    const result = await sandbox.sh`file /bin/bash.real 2>/dev/null || echo "NOT_FOUND"`;
-    const stdout = result.stdout ?? "";
+    const stdout = await sandbox.sh`file /bin/bash.real 2>/dev/null || echo "NOT_FOUND"`.text();
     if (!stdout.includes("NOT_FOUND")) {
       pass("shell shim", "/bin/bash.real exists");
     } else {
@@ -100,8 +95,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 6: command through shim
   {
     console.log("\n=== Test 6: command through shim ===");
-    const result = await sandbox.sh`/bin/bash -c "echo hello_from_shim"`;
-    const stdout = result.stdout?.trim() ?? "";
+    const stdout = (await sandbox.sh`/bin/bash -c "echo hello_from_shim"`.text()).trim();
     if (stdout.includes("hello_from_shim")) {
       pass("command through shim", stdout);
     } else {
@@ -112,8 +106,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 7: session creation
   {
     console.log("\n=== Test 7: session creation ===");
-    const result = await sandbox.sh`agentsh session create --workspace /home/user --json`;
-    const stdout = result.stdout?.trim() ?? "";
+    const stdout = (await sandbox.sh`agentsh session create --workspace /home/user --json`.text()).trim();
     try {
       const json: Record<string, unknown> = JSON.parse(stdout);
       if ("id" in json && typeof json.id === "string" && json.id.length > 0) {

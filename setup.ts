@@ -19,6 +19,8 @@ export interface AgentshSandboxOptions {
   debArch?: string;
   /** Workspace path inside sandbox. Default: "/home/user" */
   workspace?: string;
+  /** Hosts to allow network access to. Needed for bootstrap (apt + GitHub). */
+  allowNet?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +53,9 @@ export async function createAgentshSandbox(
   // 1. Create sandbox with network access enabled (needed to download agentsh
   //    and system packages during bootstrap).
   // -------------------------------------------------------------------------
-  const sandbox = await Sandbox.create({ allowNet: true });
+  const sandbox = await Sandbox.create({
+    allowNet: opts?.allowNet,
+  });
   console.log(`Sandbox created: ${sandbox.id}`);
 
   try {
@@ -118,25 +122,13 @@ agentsh --version`;
     await sandbox.sh`chown -R user:user /var/lib/agentsh /var/log/agentsh /etc/agentsh`;
     await sandbox.sh`echo "user ALL=(ALL) NOPASSWD: /usr/bin/agentsh" >> /etc/sudoers`;
 
-    // Set AGENTSH_SERVER env var if the sandbox API supports it.
-    if (sandbox.env && typeof sandbox.env.set === "function") {
-      await sandbox.env.set("AGENTSH_SERVER", "http://127.0.0.1:18080");
-    }
+    await sandbox.env.set("AGENTSH_SERVER", "http://127.0.0.1:18080");
 
     // -----------------------------------------------------------------------
     // 7. Start agentsh server in background and wait for health check
-    //
-    // We first try backgrounding via `sandbox.sh`. If the tagged template
-    // blocks on `&`, fall back to `sandbox.spawn()`.
     // -----------------------------------------------------------------------
     console.log("Starting agentsh server...");
-    if (typeof sandbox.spawn === "function") {
-      // spawn() is the preferred low-level API for background processes
-      sandbox.spawn("agentsh", ["server"]);
-    } else {
-      // Fallback: start via shell with nohup + background
-      await sandbox.sh`nohup agentsh server > /var/log/agentsh/server.log 2>&1 &`;
-    }
+    sandbox.spawn("agentsh", { args: ["server"] });
 
     console.log("Waiting for agentsh server to be ready...");
     await sandbox.sh`for i in $(seq 1 30); do if curl -sf http://127.0.0.1:18080/health > /dev/null 2>&1; then echo "agentsh server ready"; exit 0; fi; sleep 0.5; done; echo "agentsh server failed to start within 15s" >&2; exit 1`;
@@ -156,11 +148,7 @@ agentsh --version`;
     // If bootstrap fails, clean up the sandbox so we don't leak resources.
     console.error("Bootstrap failed, cleaning up sandbox...");
     try {
-      if (typeof sandbox.kill === "function") {
-        await sandbox.kill();
-      } else if (typeof sandbox.close === "function") {
-        await sandbox.close();
-      }
+      await sandbox.close();
     } catch {
       // Best-effort cleanup; ignore errors.
     }
@@ -174,31 +162,11 @@ agentsh --version`;
 
 /**
  * Write a text file into the sandbox filesystem.
- *
- * Tries the high-level `sandbox.fs.writeTextFile()` API first. If that is
- * not available, falls back to writing via a base64-encoded shell command
- * (avoids heredoc quoting issues with YAML content).
  */
 async function writeFileToSandbox(
   sandbox: Sandbox,
   path: string,
   content: string,
 ): Promise<void> {
-  // Attempt 1: Native filesystem API
-  if (
-    sandbox.fs &&
-    typeof (sandbox.fs as Record<string, unknown>).writeTextFile === "function"
-  ) {
-    await (sandbox.fs as { writeTextFile: (p: string, c: string) => Promise<void> }).writeTextFile(path, content);
-    return;
-  }
-
-  // Attempt 2: Base64 encode and decode in-sandbox (robust against special
-  // characters in YAML — no heredoc quoting needed).
-  const encoded = btoa(
-    new TextEncoder()
-      .encode(content)
-      .reduce((acc, byte) => acc + String.fromCharCode(byte), ""),
-  );
-  await sandbox.sh`echo ${encoded} | base64 -d > ${path}`;
+  await sandbox.fs.writeTextFile(path, content);
 }

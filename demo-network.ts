@@ -43,9 +43,9 @@ async function main(): Promise<void> {
     // -----------------------------------------------------------------------
     console.log("Creating agentsh session...");
     const sessionOutput =
-      await sandbox.sh`agentsh session create --workspace /home/user --json`;
+      await sandbox.sh`agentsh session create --workspace /home/user --json`.text();
     const sessionData: SessionCreateResponse = JSON.parse(
-      sessionOutput.stdout.trim(),
+      sessionOutput.trim(),
     );
     const sessionId: string = sessionData.id;
     console.log(`Session ID: ${sessionId}\n`);
@@ -65,9 +65,9 @@ async function main(): Promise<void> {
 
       try {
         const result =
-          await sandbox.sh`agentsh exec ${sessionId} --json ${payload} 2>&1`;
-        const output: string = result.stdout ?? "";
-        const exitCode: number = result.code ?? 0;
+          await sandbox.sh`agentsh exec ${sessionId} --json ${payload} 2>&1`.result();
+        const output: string = result.stdoutText ?? "";
+        const exitCode: number = result.status.code;
         const preview = output.substring(0, 150).replace(/\n/g, "\\n");
         console.log(`         ALLOWED (exit ${exitCode}): ${preview}`);
         return { allowed: true, output };

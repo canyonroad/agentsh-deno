@@ -17,12 +17,6 @@ interface SessionCreateOutput {
   id: string;
 }
 
-interface ShResult {
-  stdout: string;
-  stderr: string;
-  code: number;
-}
-
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -35,8 +29,8 @@ async function main(): Promise<void> {
     // 1. Create an agentsh session
     // -----------------------------------------------------------------------
     console.log("\n=== Creating agentsh session ===\n");
-    const sessionResult = (await sandbox.sh`agentsh session create --workspace /home/user --json`) as unknown as ShResult;
-    const sessionOutput: SessionCreateOutput = JSON.parse(sessionResult.stdout.trim());
+    const sessionText = await sandbox.sh`agentsh session create --workspace /home/user --json`.text();
+    const sessionOutput: SessionCreateOutput = JSON.parse(sessionText.trim());
     const sessionId: string = sessionOutput.id;
     console.log(`Session ID: ${sessionId}`);
 
@@ -51,19 +45,18 @@ async function main(): Promise<void> {
       const payload = JSON.stringify({ command, args });
       console.log(`  ${description}: ${command} ${args.join(" ")}`);
       try {
-        const result = (await sandbox.sh`agentsh exec ${sessionId} --json ${payload} 2>&1`) as unknown as ShResult;
-        console.log(`    -> ALLOWED (exit: ${result.code})`);
+        const result = await sandbox.sh`agentsh exec ${sessionId} --json ${payload} 2>&1`.result();
+        console.log(`    -> ALLOWED (exit: ${result.status.code})`);
       } catch (err: unknown) {
-        const error = err as { stdout?: string; stderr?: string; message?: string };
-        const output = (error.stdout ?? "") + (error.stderr ?? "") + (error.message ?? "");
-        if (output.includes("denied by policy")) {
-          const ruleMatch = output.match(/rule[:\s]+"?([^"|\n]+)"?/i)
-            ?? output.match(/policy rule[:\s]+"?([^"|\n]+)"?/i)
-            ?? output.match(/"rule_name"[:\s]+"?([^"|\n]+)"?/i);
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("denied by policy")) {
+          const ruleMatch = message.match(/rule[:\s]+"?([^"|\n]+)"?/i)
+            ?? message.match(/policy rule[:\s]+"?([^"|\n]+)"?/i)
+            ?? message.match(/"rule_name"[:\s]+"?([^"|\n]+)"?/i);
           const ruleName = ruleMatch ? ruleMatch[1].trim() : "unknown";
           console.log(`    -> BLOCKED by policy rule: ${ruleName}`);
         } else {
-          console.log(`    -> BLOCKED (non-policy error): ${output.slice(0, 200)}`);
+          console.log(`    -> BLOCKED (non-policy error): ${message.slice(0, 200)}`);
         }
       }
     }
