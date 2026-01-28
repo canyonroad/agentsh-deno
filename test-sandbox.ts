@@ -84,11 +84,11 @@ async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 5: shell shim
   {
     console.log("\n=== Test 5: shell shim ===");
-    const stdout = await sandbox.sh`file /bin/bash.real 2>/dev/null || echo "NOT_FOUND"`.text();
-    if (!stdout.includes("NOT_FOUND")) {
-      pass("shell shim", "/bin/bash.real exists");
+    const stdout = await sandbox.sh`test -x /usr/bin/agentsh-shell-shim && echo "SHIM_OK" || echo "SHIM_MISSING"`.text();
+    if (stdout.includes("SHIM_OK")) {
+      pass("shell shim", "/usr/bin/agentsh-shell-shim exists");
     } else {
-      fail("shell shim", "/bin/bash.real not found — shim may not be installed");
+      fail("shell shim", "agentsh-shell-shim not found");
     }
   }
 
