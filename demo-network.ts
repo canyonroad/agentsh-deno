@@ -102,6 +102,7 @@ async function main(): Promise<void> {
       await sandbox.fs.writeTextFile(
         "/tmp/exec-cmd.sh",
         `#!/bin/sh
+rm -f /tmp/exec-result.json
 curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
   -H "Content-Type: application/json" \
   --connect-timeout 10 \

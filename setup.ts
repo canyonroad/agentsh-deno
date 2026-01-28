@@ -21,6 +21,8 @@ export interface AgentshSandboxOptions {
   workspace?: string;
   /** Hosts to allow network access to. Needed for bootstrap (apt + GitHub). */
   allowNet?: string[];
+  /** Extra env vars to inject before starting the agentsh server. */
+  envVars?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +137,13 @@ agentsh --version
     );
 
     await sandbox.env.set("AGENTSH_SERVER", "http://127.0.0.1:18080");
+
+    // Inject caller-provided env vars so the agentsh server inherits them.
+    if (opts?.envVars) {
+      for (const [key, value] of Object.entries(opts.envVars)) {
+        await sandbox.env.set(key, value);
+      }
+    }
 
     // -----------------------------------------------------------------------
     // 7. Start agentsh server in background and wait for health check
