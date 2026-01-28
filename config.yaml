@@ -1,0 +1,124 @@
+# agentsh server configuration for Deno sandbox
+# Extends default config with settings optimized for sandbox environment
+
+server:
+  http:
+    addr: "127.0.0.1:18080"
+    read_timeout: "30s"
+    write_timeout: "60s"
+    max_request_size: "10MB"
+  grpc:
+    enabled: true
+    addr: "127.0.0.1:9090"
+
+auth:
+  type: "none"
+
+logging:
+  level: "info"
+  format: "text"
+  output: "stderr"
+
+sessions:
+  base_dir: "/var/lib/agentsh/sessions"
+  max_sessions: 100
+  default_timeout: "1h"
+  default_idle_timeout: "15m"
+  cleanup_interval: "5m"
+
+audit:
+  enabled: true
+  storage:
+    sqlite_path: "/var/lib/agentsh/events.db"
+
+sandbox:
+  enabled: true
+  allow_degraded: true  # Allow running in sandbox without all features
+
+  limits:
+    max_memory_mb: 4096
+    max_cpu_percent: 100
+    max_processes: 256
+
+  fuse:
+    enabled: true
+
+  network:
+    enabled: true
+    intercept_mode: "all"
+    proxy_listen_addr: "127.0.0.1:0"
+
+  cgroups:
+    enabled: true
+
+  seccomp:
+    enabled: true
+
+security:
+  mode: full
+  strict: true
+
+capabilities:
+  allow: []
+
+proxy:
+  mode: "embedded"
+  port: 0
+  providers:
+    anthropic: "https://api.anthropic.com"
+    openai: "https://api.openai.com"
+
+dlp:
+  mode: "redact"
+  patterns:
+    email: true
+    phone: true
+    credit_card: true
+    ssn: true
+    api_keys: true
+  custom_patterns:
+    - name: openai_key
+      display: OPENAI_KEY
+      regex: "sk-[a-zA-Z0-9]{48,}"
+    - name: anthropic_key
+      display: ANTHROPIC_KEY
+      regex: "sk-ant-[a-zA-Z0-9-]{95,}"
+    - name: aws_access_key
+      display: AWS_KEY
+      regex: "AKIA[0-9A-Z]{16}"
+    - name: github_pat
+      display: GITHUB_TOKEN
+      regex: "ghp_[a-zA-Z0-9]{36}"
+    - name: github_oauth
+      display: GITHUB_OAUTH
+      regex: "gho_[a-zA-Z0-9]{36}"
+    - name: jwt_token
+      display: JWT
+      regex: "eyJ[a-zA-Z0-9_-]*\\.eyJ[a-zA-Z0-9_-]*\\.[a-zA-Z0-9_-]*"
+    - name: private_key
+      display: PRIVATE_KEY
+      regex: "-----BEGIN [A-Z]+ PRIVATE KEY-----"
+    - name: slack_token
+      display: SLACK_TOKEN
+      regex: "xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}"
+
+policies:
+  dir: "/etc/agentsh/policies"
+  default_policy: "default"
+
+approvals:
+  enabled: false
+  mode: "async"
+  timeout: "5m"
+
+metrics:
+  enabled: true
+  path: "/metrics"
+
+health:
+  path: "/health"
+  readiness_path: "/ready"
+
+development:
+  disable_auth: true
+  verbose_errors: false
