@@ -1,0 +1,185 @@
+# agentsh + Deno Sandbox
+
+Run AI agents inside [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) with [agentsh](https://www.agentsh.org) security policy enforcement.
+
+agentsh provides default-deny allowlists for file, network, process, and signal operations. Deno Sandboxes provide ephemeral Firecracker microVMs. Together, they give AI agents an isolated, policy-enforced execution environment.
+
+## What this adds to Deno Sandbox
+
+A bare Deno Sandbox is a Linux microVM with no security policy layer. This integration adds:
+
+- **Command policy enforcement** -- allowlist of permitted commands; blocks privilege escalation (`sudo`, `su`, `chroot`), network tools (`ssh`, `nc`), system commands (`kill`, `shutdown`, `systemctl`), and recursive deletes (`rm -rf`)
+- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 192.168.x), and unknown domains; allows localhost and package registries
+- **File operation policy** -- workspace read/write with soft-delete (recoverable), read-only access to system paths, blocked access to credentials and secrets
+- **Shell shim** -- transparent interception of all bash invocations through agentsh for policy enforcement
+- **Audit logging** -- all operations logged for review
+- **DLP redaction** -- sensitive patterns (API keys, tokens) redacted in output
+
+## Security capabilities
+
+`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie):
+
+```
+Platform: linux
+Security Mode: landlock-only
+Protection Score: 80%
+
+CAPABILITIES
+----------------------------------------
+  capabilities_drop        YES
+  cgroups_v2               YES
+  ebpf                     YES
+  fuse                     -
+  landlock                 YES
+  landlock_abi             YES (v2)
+  landlock_network         -
+  pid_namespace            -
+  seccomp                  YES
+  seccomp_basic            YES
+  seccomp_user_notify      YES
+```
+
+| Capability | Local (bare metal) | Deno Sandbox |
+|---|---|---|
+| Security Mode | full | landlock-only |
+| Protection Score | 100% | 80% |
+| eBPF | yes | yes |
+| Seccomp (user_notify) | yes | yes |
+| Landlock | v5 | v2 |
+| Landlock network | yes | no (needs kernel 6.7+) |
+| FUSE | yes | no (needs fuse3) |
+| PID namespace | no | no |
+
+## Prerequisites
+
+- [Deno](https://deno.land/) 2.x
+- A `DENO_DEPLOY_TOKEN` (get one from [Deno Deploy](https://dash.deno.com))
+
+## Setup
+
+```bash
+git clone <repo-url>
+cd agentsh-deno
+
+# Add your Deno Deploy token
+echo "DENO_DEPLOY_TOKEN=your_token_here" > .env
+```
+
+## Usage
+
+### Bootstrap a sandbox with agentsh
+
+```typescript
+import { createAgentshSandbox } from "./setup.ts";
+
+const sandbox = await createAgentshSandbox();
+// sandbox now has agentsh installed, server running, shell shim active
+
+// Run commands through the policy-enforced shell
+const output = await sandbox.sh`echo hello`.text();
+
+// Clean up
+await sandbox.close();
+```
+
+The bootstrap sequence:
+1. Creates a Deno Sandbox (Firecracker microVM)
+2. Installs system dependencies (curl, jq, libseccomp2, sudo)
+3. Downloads and installs agentsh from GitHub releases
+4. Creates directories and sets permissions
+5. Writes server config and security policy
+6. Starts the agentsh server
+7. Installs the shell shim (replaces /bin/bash)
+
+### Run the demos
+
+```bash
+# Command blocking demo -- tests allowed/blocked commands
+deno task demo:blocking
+
+# Network policy demo -- tests allowed/blocked network targets
+deno task demo:network
+
+# Sandbox verification tests
+deno task test
+
+# Run agentsh detect inside a sandbox
+deno run --allow-all --env-file=.env detect-sandbox.ts
+```
+
+All tasks require `--env-file=.env` (or `DENO_DEPLOY_TOKEN` in environment) since they create remote sandboxes.
+
+## What the demos test
+
+### demo-blocking.ts
+
+Tests command policy enforcement through agentsh exec:
+
+| Category | Commands | Expected |
+|---|---|---|
+| Safe commands | `echo`, `pwd`, `ls`, `date`, `python3`, `git` | ALLOWED |
+| Privilege escalation | `sudo`, `su`, `chroot` | BLOCKED |
+| Network tools | `ssh`, `nc` | BLOCKED |
+| System commands | `kill`, `shutdown`, `systemctl` | BLOCKED |
+| Recursive delete | `rm -rf`, `rm -r` | BLOCKED |
+| Single file delete | `rm file.txt` | ALLOWED |
+
+### demo-network.ts
+
+Tests network policy enforcement:
+
+| Target | Expected |
+|---|---|
+| Localhost (127.0.0.1:18080) | ALLOWED |
+| AWS metadata (169.254.169.254) | BLOCKED |
+| Private network (10.0.0.1) | BLOCKED |
+| Private network (192.168.1.1) | BLOCKED |
+| npm registry (registry.npmjs.org) | ALLOWED |
+| PyPI (pypi.org) | ALLOWED |
+| Unknown domain (example.com) | BLOCKED |
+
+### test-sandbox.ts
+
+Verification smoke tests:
+
+1. agentsh installation -- binary present and reports version
+2. Server health -- HTTP health check returns ok
+3. Policy file -- default.yaml present in /etc/agentsh/policies/
+4. Config file -- config.yaml present in /etc/agentsh/
+5. Shell shim -- /bin/bash.real exists (original bash backed up)
+6. Command through shim -- echo through /bin/bash works
+7. Session creation -- agentsh session create returns valid JSON with id
+
+## Project structure
+
+```
+agentsh-deno/
+  setup.ts              # Bootstrap function: createAgentshSandbox()
+  config.yaml           # agentsh server configuration
+  default.yaml          # Security policy (default-deny allowlist)
+  demo-blocking.ts      # Command policy demo
+  demo-network.ts       # Network policy demo
+  test-sandbox.ts       # Verification tests
+  detect-sandbox.ts     # Run agentsh detect inside sandbox
+  deno.json             # Deno project config and tasks
+```
+
+## Configuration
+
+### config.yaml
+
+Server configuration: localhost-only binding (127.0.0.1:18080), no auth (sandbox-internal), gRPC on port 9090, full security mode with all enforcement layers enabled.
+
+### default.yaml
+
+Security policy with default-deny allowlist covering:
+- **File rules** -- workspace read/write, system read-only, credential blocking
+- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked, package registries allowed, default deny
+- **Command rules** -- safe commands allowed, privilege escalation blocked, network tools blocked, system commands blocked, recursive delete blocked
+- **Environment policy** -- sensitive env vars redacted
+- **Resource limits** -- max file size, process count, open files
+- **Audit** -- all operations logged
+
+## License
+
+MIT
