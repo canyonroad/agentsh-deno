@@ -25,7 +25,7 @@ interface RunResult {
 }
 
 interface SessionCreateResponse {
-  session_id: string;
+  id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     const sessionData: SessionCreateResponse = JSON.parse(
       sessionOutput.stdout.trim(),
     );
-    const sessionId: string = sessionData.session_id;
+    const sessionId: string = sessionData.id;
     console.log(`Session ID: ${sessionId}\n`);
 
     // -----------------------------------------------------------------------

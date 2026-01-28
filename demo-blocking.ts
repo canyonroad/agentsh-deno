@@ -14,7 +14,7 @@ import { createAgentshSandbox } from "./setup.ts";
 // ---------------------------------------------------------------------------
 
 interface SessionCreateOutput {
-  session_id: string;
+  id: string;
 }
 
 interface ShResult {
@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     console.log("\n=== Creating agentsh session ===\n");
     const sessionResult = (await sandbox.sh`agentsh session create --workspace /home/user --json`) as unknown as ShResult;
     const sessionOutput: SessionCreateOutput = JSON.parse(sessionResult.stdout.trim());
-    const sessionId: string = sessionOutput.session_id;
+    const sessionId: string = sessionOutput.id;
     console.log(`Session ID: ${sessionId}`);
 
     // -----------------------------------------------------------------------
