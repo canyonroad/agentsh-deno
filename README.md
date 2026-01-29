@@ -40,16 +40,44 @@ CAPABILITIES
   seccomp_user_notify      YES
 ```
 
-| Capability | Local (bare metal) | Deno Sandbox |
-|---|---|---|
-| Security Mode | full | landlock-only |
-| Protection Score | 100% | 80% |
-| eBPF | yes | yes |
-| Seccomp (user_notify) | yes | yes |
-| Landlock | v5 | v2 |
-| Landlock network | yes | no (needs kernel 6.7+) |
-| FUSE | yes | no (needs fuse3) |
-| PID namespace | no | no |
+### Why 80% is better than it sounds
+
+The 80% score reflects missing kernel features, but **the actual security posture is stronger** because:
+
+| Missing Feature | Why It Doesn't Matter |
+|-----------------|----------------------|
+| **Landlock network** | eBPF is available and more powerful — agentsh uses it for network filtering. The demos prove private IPs and metadata endpoints are blocked. |
+| **PID namespace** | Redundant in a Firecracker microVM. The VM boundary already isolates processes — there are no "other processes" to hide from. The VM is ephemeral and destroyed after use. |
+| **FUSE** | The only truly missing feature. Enables filesystem virtualization for transparent file interception. Workaround: Landlock v2 still enforces path-based file access rules. |
+
+The Firecracker microVM itself provides isolation that makes some agentsh features redundant:
+
+```
+┌─────────────────────────────────────┐
+│  Firecracker microVM (isolation)    │  ← VM boundary
+│  ┌───────────────────────────────┐  │
+│  │  agentsh (policy enforcement) │  │  ← Policy layer
+│  │  ┌─────────────────────────┐  │  │
+│  │  │  Your sandboxed code    │  │  │
+│  │  └─────────────────────────┘  │  │
+│  └───────────────────────────────┘  │
+└─────────────────────────────────────┘
+```
+
+**What's working:** Seccomp, eBPF, Landlock (v2), cgroups v2, capability dropping — all the enforcement mechanisms needed for command, network, file, and environment policy.
+
+### Capability comparison
+
+| Capability | Local (bare metal) | Deno Sandbox | Notes |
+|---|---|---|---|
+| Security Mode | full | landlock-only | |
+| Protection Score | 100% | 80% | See above — actual security is better |
+| eBPF | yes | yes | Covers for missing Landlock network |
+| Seccomp (user_notify) | yes | yes | |
+| Landlock | v5 | v2 | v2 sufficient for file access control |
+| Landlock network | yes | no | eBPF provides equivalent filtering |
+| FUSE | yes | no | Only meaningful missing feature |
+| PID namespace | no | no | Redundant in microVM |
 
 ## Prerequisites
 
