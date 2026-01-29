@@ -5,6 +5,7 @@
   "tasks": {
     "demo:blocking": "deno run --allow-net --allow-env --allow-read demo-blocking.ts",
     "demo:network": "deno run --allow-net --allow-env --allow-read demo-network.ts",
+    "demo:env": "deno run --allow-net --allow-env --allow-read demo-env.ts",
     "test": "deno run --allow-net --allow-env --allow-read test-sandbox.ts"
   }
 }

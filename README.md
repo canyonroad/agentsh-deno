@@ -9,7 +9,8 @@ agentsh provides default-deny allowlists for file, network, process, and signal 
 A bare Deno Sandbox is a Linux microVM with no security policy layer. This integration adds:
 
 - **Command policy enforcement** -- allowlist of permitted commands; blocks privilege escalation (`sudo`, `su`, `chroot`), network tools (`ssh`, `nc`), system commands (`kill`, `shutdown`, `systemctl`), and recursive deletes (`rm -rf`)
-- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 192.168.x), and unknown domains; allows localhost and package registries
+- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 172.16.x, 192.168.x); allows localhost and package registries
+- **Environment variable policy** -- allowlist of visible env vars; secrets (AWS_*, OPENAI_API_KEY, DATABASE_URL, etc.) hidden from commands even if set in the server environment; enumeration filtered to prevent credential leakage
 - **File operation policy** -- workspace read/write with soft-delete (recoverable), read-only access to system paths, blocked access to credentials and secrets
 - **Shell shim** -- transparent interception of all bash invocations through agentsh for policy enforcement
 - **Audit logging** -- all operations logged for review
@@ -100,6 +101,9 @@ deno task demo:blocking
 # Network policy demo -- tests allowed/blocked network targets
 deno task demo:network
 
+# Environment variable policy demo -- tests allowed/hidden env vars
+deno task demo:env
+
 # Sandbox verification tests
 deno task test
 
@@ -133,10 +137,28 @@ Tests network policy enforcement:
 | Localhost (127.0.0.1:18080) | ALLOWED |
 | AWS metadata (169.254.169.254) | BLOCKED |
 | Private network (10.0.0.1) | BLOCKED |
+| Private network (172.16.0.1) | BLOCKED |
 | Private network (192.168.1.1) | BLOCKED |
 | npm registry (registry.npmjs.org) | ALLOWED |
 | PyPI (pypi.org) | ALLOWED |
-| Unknown domain (example.com) | BLOCKED |
+
+### demo-env.ts
+
+Tests environment variable policy enforcement. Injects test secrets into the sandbox environment before starting the agentsh server, then verifies the exec API correctly filters them:
+
+| Env Var | In Policy | Expected |
+|---|---|---|
+| PATH | allow list | VISIBLE |
+| HOME | allow list | VISIBLE |
+| TERM | allow list | VISIBLE |
+| AWS_SECRET_ACCESS_KEY | deny list | HIDDEN |
+| AWS_SESSION_TOKEN | deny list | HIDDEN |
+| OPENAI_API_KEY | deny list | HIDDEN |
+| DATABASE_URL | deny list | HIDDEN |
+| SECRET_SIGNING_KEY | deny list | HIDDEN |
+| MY_CUSTOM_SETTING | not listed | HIDDEN |
+| `printenv` (all) | block_iteration | filtered (14 vars, no secrets) |
+| `env` (all) | block_iteration | filtered (14 vars, no secrets) |
 
 ### test-sandbox.ts
 
@@ -159,6 +181,7 @@ agentsh-deno/
   default.yaml          # Security policy (default-deny allowlist)
   demo-blocking.ts      # Command policy demo
   demo-network.ts       # Network policy demo
+  demo-env.ts           # Environment variable policy demo
   test-sandbox.ts       # Verification tests
   detect-sandbox.ts     # Run agentsh detect inside sandbox
   deno.json             # Deno project config and tasks
@@ -174,9 +197,9 @@ Server configuration: localhost-only binding (127.0.0.1:18080), no auth (sandbox
 
 Security policy with default-deny allowlist covering:
 - **File rules** -- workspace read/write, system read-only, credential blocking
-- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked, package registries allowed, default deny
+- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked, package registries allowed
 - **Command rules** -- safe commands allowed, privilege escalation blocked, network tools blocked, system commands blocked, recursive delete blocked
-- **Environment policy** -- sensitive env vars redacted
+- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.), block_iteration prevents full env enumeration
 - **Resource limits** -- max file size, process count, open files
 - **Audit** -- all operations logged
 
