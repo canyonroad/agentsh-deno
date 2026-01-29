@@ -94,6 +94,8 @@ The bootstrap sequence:
 
 ### Run the demos
 
+After setup, run any of the demos to see agentsh policy enforcement in action:
+
 ```bash
 # Command blocking demo -- tests allowed/blocked commands
 deno task demo:blocking
@@ -111,7 +113,7 @@ deno task test
 deno run --allow-all --env-file=.env detect-sandbox.ts
 ```
 
-All tasks require `--env-file=.env` (or `DENO_DEPLOY_TOKEN` in environment) since they create remote sandboxes.
+Each demo creates a fresh Deno Sandbox, bootstraps agentsh, runs the tests, and cleans up. Expect ~30-60 seconds for sandbox creation and package installation.
 
 ## What the demos test
 
