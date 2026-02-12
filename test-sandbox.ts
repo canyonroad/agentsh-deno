@@ -36,9 +36,17 @@ function fail(name: string, detail?: string): void {
 // Tests
 // ---------------------------------------------------------------------------
 
+async function runTest(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    fail(name, `${err}`);
+  }
+}
+
 async function runTests(sandbox: Sandbox): Promise<void> {
   // Test 1: agentsh installation
-  {
+  await runTest("agentsh installation", async () => {
     console.log("\n=== Test 1: agentsh installation ===");
     const stdout = (await sandbox.sh`agentsh --version`.text()).trim();
     if (stdout.includes("agentsh")) {
@@ -46,10 +54,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("agentsh installation", `expected stdout to include "agentsh", got: ${stdout}`);
     }
-  }
+  });
 
   // Test 2: server health
-  {
+  await runTest("server health", async () => {
     console.log("\n=== Test 2: server health ===");
     const stdout = (await sandbox.sh`curl -s http://127.0.0.1:18080/health`.text()).trim();
     if (stdout === "ok") {
@@ -57,10 +65,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("server health", `expected "ok", got: ${stdout}`);
     }
-  }
+  });
 
   // Test 3: policy file
-  {
+  await runTest("policy file", async () => {
     console.log("\n=== Test 3: policy file ===");
     const stdout = await sandbox.sh`head -5 /etc/agentsh/policies/default.yaml`.text();
     if (stdout.includes("version")) {
@@ -68,10 +76,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("policy file", `expected to include "version", got: ${stdout}`);
     }
-  }
+  });
 
   // Test 4: config file
-  {
+  await runTest("config file", async () => {
     console.log("\n=== Test 4: config file ===");
     const stdout = await sandbox.sh`head -5 /etc/agentsh/config.yaml`.text();
     if (stdout.includes("server")) {
@@ -79,10 +87,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("config file", `expected to include "server", got: ${stdout}`);
     }
-  }
+  });
 
   // Test 5: shell shim
-  {
+  await runTest("shell shim", async () => {
     console.log("\n=== Test 5: shell shim ===");
     const stdout = await sandbox.sh`test -x /usr/bin/agentsh-shell-shim && echo "SHIM_OK" || echo "SHIM_MISSING"`.text();
     if (stdout.includes("SHIM_OK")) {
@@ -90,10 +98,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("shell shim", "agentsh-shell-shim not found");
     }
-  }
+  });
 
   // Test 6: command through shim
-  {
+  await runTest("command through shim", async () => {
     console.log("\n=== Test 6: command through shim ===");
     const stdout = (await sandbox.sh`/bin/bash -c "echo hello_from_shim"`.text()).trim();
     if (stdout.includes("hello_from_shim")) {
@@ -101,10 +109,10 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } else {
       fail("command through shim", `expected "hello_from_shim", got: ${stdout}`);
     }
-  }
+  });
 
   // Test 7: session creation
-  {
+  await runTest("session creation", async () => {
     console.log("\n=== Test 7: session creation ===");
     const stdout = (await sandbox.sh`agentsh session create --workspace /app --json`.text()).trim();
     try {
@@ -117,7 +125,7 @@ async function runTests(sandbox: Sandbox): Promise<void> {
     } catch {
       fail("session creation", `failed to parse JSON: ${stdout}`);
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------

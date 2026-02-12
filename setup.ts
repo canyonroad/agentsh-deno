@@ -49,7 +49,7 @@ export async function createAgentshSandbox(
 ): Promise<Sandbox> {
   const repo = opts?.agentshRepo ?? "erans/agentsh";
   const arch = opts?.debArch ?? "amd64";
-  const _workspace = opts?.workspace ?? "/app";
+  const workspace = opts?.workspace ?? "/app";
 
   // -------------------------------------------------------------------------
   // 1. Create sandbox with network access enabled (needed to download agentsh
@@ -73,7 +73,7 @@ export async function createAgentshSandbox(
     // -----------------------------------------------------------------------
     console.log("Installing system dependencies...");
     await sandbox.sh`mkdir -p /var/lib/apt/lists/partial`.sudo();
-    await sandbox.sh`apt-get update`.sudo();
+    await sandbox.sh`apt-get -o Acquire::Check-Valid-Until=false update`.sudo();
     await sandbox.sh`apt-get install -y --no-install-recommends ca-certificates curl jq libseccomp2 sudo`.sudo();
     await sandbox.sh`rm -rf /var/lib/apt/lists/*`.sudo();
 
@@ -108,11 +108,11 @@ agentsh --version
     // 4. Create required directories and set ownership
     // -----------------------------------------------------------------------
     console.log("Creating directories...");
-    await sandbox.sh`mkdir -p /etc/agentsh/policies /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh`.sudo();
+    await sandbox.sh`mkdir -p /etc/agentsh/policies /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh ${workspace}`.sudo();
     await sandbox.sh`chmod 755 /etc/agentsh /etc/agentsh/policies /var/lib/agentsh /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh`.sudo();
 
     console.log("Setting permissions...");
-    await sandbox.sh`chown -R ${sbUser}:${sbGroup} /var/lib/agentsh /var/log/agentsh /etc/agentsh`.sudo();
+    await sandbox.sh`chown -R ${sbUser}:${sbGroup} /var/lib/agentsh /var/log/agentsh /etc/agentsh ${workspace}`.sudo();
     await sandbox.sh`echo "${sbUser} ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers > /dev/null`;
 
     // -----------------------------------------------------------------------

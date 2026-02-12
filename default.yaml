@@ -102,7 +102,7 @@ file_rules:
   # ---------------------------------------------------------------------------
 
   - name: allow-system-read
-    description: Read access to system paths
+    description: Read and execute access to system paths
     paths:
       - "/usr/**"
       - "/lib/**"
@@ -115,6 +115,7 @@ file_rules:
       - stat
       - list
       - readlink
+      - execute
     decision: allow
 
   - name: allow-etc-minimal
@@ -125,6 +126,7 @@ file_rules:
       - "/etc/ssl/certs/**"
       - "/etc/ca-certificates/**"
       - "/etc/localtime"
+      - "/etc/agentsh/**"
     operations:
       - read
       - stat
@@ -558,7 +560,7 @@ env_policy:
   # Limits to prevent env enumeration attacks
   max_bytes: 65536      # Max total size of env vars (64KB)
   max_keys: 100         # Max number of env vars
-  block_iteration: true # Prevent enumeration of all env vars
+  block_iteration: false # Requires env_shim_path to be set in server config
 
 # =============================================================================
 # RESOURCE LIMITS - Conservative
