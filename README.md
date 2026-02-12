@@ -11,7 +11,7 @@ A bare Deno Sandbox is a Linux microVM with no security policy layer. This integ
 - **Command policy enforcement** -- allowlist of permitted commands; blocks privilege escalation (`sudo`, `su`, `chroot`), network tools (`ssh`, `nc`), system commands (`kill`, `shutdown`, `systemctl`), and recursive deletes (`rm -rf`)
 - **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 172.16.x, 192.168.x); allows localhost and package registries
 - **Environment variable policy** -- allowlist of visible env vars; secrets (AWS_*, OPENAI_API_KEY, DATABASE_URL, etc.) hidden from commands even if set in the server environment; enumeration filtered to prevent credential leakage
-- **File operation policy** -- workspace read/write with soft-delete (recoverable), read-only access to system paths, blocked access to credentials and secrets
+- **File operation policy** -- workspace read/write with soft-delete (recoverable), read-only access to system paths, blocked access to credentials and secrets. **Note:** file_rules are defined but not currently kernel-enforced in this sandbox (see [capability comparison](#capability-comparison) below).
 - **Shell shim** -- transparent interception of all bash invocations through agentsh for policy enforcement
 - **Audit logging** -- all operations logged for review
 - **DLP redaction** -- sensitive patterns (API keys, tokens) redacted in output
@@ -42,13 +42,28 @@ CAPABILITIES
 
 ### Why 80% is better than it sounds
 
-The 80% score reflects missing kernel features, but **the actual security posture is stronger** because:
+The 80% score reflects missing kernel features, but **the actual security posture is stronger than a bare sandbox** because of the layered enforcement that IS working:
 
-| Missing Feature | Why It Doesn't Matter |
-|-----------------|----------------------|
+| Missing Feature | Impact |
+|-----------------|--------|
 | **Landlock network** | eBPF is available and more powerful — agentsh uses it for network filtering. The demos prove private IPs and metadata endpoints are blocked. |
-| **PID namespace** | Redundant in a Firecracker microVM. The VM boundary already isolates processes — there are no "other processes" to hide from. The VM is ephemeral and destroyed after use. |
-| **FUSE** | The only truly missing feature. Enables filesystem virtualization for transparent file interception. Workaround: Landlock v2 still enforces path-based file access rules. |
+| **PID namespace** | Redundant in a Firecracker microVM. The VM boundary already isolates processes. |
+| **FUSE** | `/dev/fuse` is not exposed in the sandbox. Means no transparent filesystem virtualization. |
+
+### What's actually enforcing
+
+**Working:**
+- **Command policy** -- shell shim intercepts all bash invocations, agentsh applies command_rules (allow/deny/approve)
+- **Network policy** -- seccomp + eBPF intercept connect() calls, network_rules block private CIDRs, metadata endpoints, etc.
+- **Environment variable policy** -- exec API filters env vars per env_policy allowlist/denylist
+- **Session management** -- audit logging, DLP redaction, session lifecycle
+- **Seccomp** -- active with user_notify for command interception
+
+**Not enforcing (detected but degraded):**
+- **Landlock file policy** -- agentsh detects Landlock v2 as available (kernel 6.1 has it compiled in), but `/sys/kernel/security/landlock/` is not mounted inside the container. With `allow_degraded: true`, agentsh silently degrades. The file_rules in default.yaml (default-deny, workspace read/write, credential blocking) are **not kernel-enforced**. Tested: `/etc/shadow` is readable and writes to `/etc/` succeed through the exec API.
+- **FUSE** -- not available (`/dev/fuse` doesn't exist, no kernel module). Would provide filesystem virtualization as an alternative to Landlock for file policy.
+
+This means the `file_rules` section in `default.yaml` defines the **intended** file policy, but it is not currently enforced at the kernel level. Command and network policies ARE enforced.
 
 The Firecracker microVM itself provides isolation that makes some agentsh features redundant:
 
@@ -64,20 +79,32 @@ The Firecracker microVM itself provides isolation that makes some agentsh featur
 └─────────────────────────────────────┘
 ```
 
-**What's working:** Seccomp, eBPF, Landlock (v2), cgroups v2, capability dropping — all the enforcement mechanisms needed for command, network, file, and environment policy.
+### What would fix file policy enforcement
+
+Either of these would enable kernel-level file_rules enforcement:
+
+1. **Mount securityfs** -- if the Deno sandbox exposed `/sys/kernel/security/landlock/`, Landlock v2 rules would apply. Requires changes to how Deno provisions sandbox containers.
+2. **Expose `/dev/fuse`** -- if FUSE were available, agentsh could virtualize the filesystem. Requires the FUSE kernel module and device node in the container.
+3. **Kernel upgrade to 6.7+** -- would additionally enable Landlock network enforcement (currently handled by eBPF).
+
+**What's working:** Seccomp, eBPF, shell shim, cgroups v2, capability dropping — all the enforcement mechanisms for command, network, and environment policy.
 
 ### Capability comparison
 
 | Capability | Local (bare metal) | Deno Sandbox | Notes |
 |---|---|---|---|
 | Security Mode | full | landlock-only | |
-| Protection Score | 100% | 80% | See above — actual security is better |
-| eBPF | yes | yes | Covers for missing Landlock network |
-| Seccomp (user_notify) | yes | yes | |
-| Landlock | v5 | v2 | v2 sufficient for file access control |
+| Protection Score | 100% | 80% | See above for actual enforcement status |
+| eBPF | yes | yes | Provides network filtering |
+| Seccomp (user_notify) | yes | yes | Powers shell shim + command interception |
+| Landlock | v5 | detected v2 | **Detected but not enforcing** -- securityfs not mounted |
 | Landlock network | yes | no | eBPF provides equivalent filtering |
-| FUSE | yes | no | Only meaningful missing feature |
+| FUSE | yes | no | No /dev/fuse, no kernel module |
 | PID namespace | no | no | Redundant in microVM |
+| File policy enforcement | yes | **no** | Needs working Landlock or FUSE |
+| Command policy enforcement | yes | yes | Via shell shim + seccomp |
+| Network policy enforcement | yes | yes | Via eBPF + seccomp |
+| Env var policy enforcement | yes | yes | Via exec API |
 
 ## Prerequisites
 
@@ -229,7 +256,7 @@ Security policy with default-deny allowlist covering:
 - **File rules** -- workspace read/write, system read-only, credential blocking
 - **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked, package registries allowed
 - **Command rules** -- safe commands allowed, privilege escalation blocked, network tools blocked, system commands blocked, recursive delete blocked
-- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.), block_iteration prevents full env enumeration
+- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.); block_iteration disabled (requires env_shim_path configuration)
 - **Resource limits** -- max file size, process count, open files
 - **Audit** -- all operations logged
 
