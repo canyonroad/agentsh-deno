@@ -1,22 +1,56 @@
 # agentsh + Deno Sandbox
 
-Run AI agents inside [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) with [agentsh](https://www.agentsh.org) v0.15.0 security policy enforcement.
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.15.0 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
 
-agentsh provides default-deny allowlists for file, network, process, and signal operations. Deno Sandboxes provide ephemeral Firecracker microVMs. Together, they give AI agents an isolated, policy-enforced execution environment.
+## Why agentsh + Deno Sandbox?
 
-## What this adds to Deno Sandbox
+**Deno Sandbox provides isolation. agentsh provides governance.**
 
-A bare Deno Sandbox is a Linux microVM with no security policy layer. This integration adds:
+Deno Sandboxes give AI agents a secure, isolated compute environment via Firecracker microVMs. But isolation alone doesn't prevent an agent from:
 
-- **Command policy enforcement** -- allowlist of permitted commands; blocks privilege escalation (`sudo`, `su`, `chroot`), network tools (`ssh`, `nc`), system commands (`kill`, `shutdown`, `systemctl`), and recursive deletes (`rm -rf`)
-- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 172.16.x, 192.168.x, IPv6 fc00::/7, fe80::/10); allows localhost, package registries, GitHub; unknown HTTPS destinations require approval
-- **Environment variable policy** -- allowlist of visible env vars; secrets (AWS_*, OPENAI_API_KEY, DATABASE_URL, etc.) hidden from commands even if set in the server environment; BASH_ENV injection for shell startup hooks; enumeration filtered to prevent credential leakage
-- **File operation policy** -- workspace read/write with approval-gated deletes, read-only access to system paths, denied access to credentials and secrets (`/etc/passwd`, `/etc/shadow`, SSH keys, cloud creds). Uses `real_paths` mode for transparent command interception as an alternative to FUSE.
-- **Shell shim** -- transparent interception of all bash invocations through agentsh for policy enforcement
-- **Audit logging** -- all operations logged for review
-- **DLP redaction** -- sensitive patterns (API keys, tokens) redacted in output
+- **Exfiltrating data** to unauthorized endpoints
+- **Accessing cloud metadata** (AWS/GCP/Azure credentials at 169.254.169.254)
+- **Leaking secrets** in outputs (API keys, tokens, PII)
+- **Running dangerous commands** (sudo, ssh, kill, nc)
+- **Reaching internal networks** (10.x, 172.16.x, 192.168.x)
+- **Deleting workspace files** permanently
 
-## Security capabilities
+agentsh adds the governance layer that controls what agents can do inside the sandbox, providing defense-in-depth:
+
+```
++---------------------------------------------------------+
+|  Deno Sandbox / Firecracker microVM (Isolation)         |
+|  +---------------------------------------------------+  |
+|  |  agentsh (Governance)                             |  |
+|  |  +---------------------------------------------+  |  |
+|  |  |  AI Agent                                   |  |  |
+|  |  |  - Commands are policy-checked              |  |  |
+|  |  |  - Network requests are filtered            |  |  |
+|  |  |  - File I/O rules defined (real_paths mode) |  |  |
+|  |  |  - Secrets are redacted from output         |  |  |
+|  |  |  - All actions are audited                  |  |  |
+|  |  +---------------------------------------------+  |  |
+|  +---------------------------------------------------+  |
++---------------------------------------------------------+
+```
+
+## What agentsh Adds
+
+| Deno Sandbox Provides | agentsh Adds |
+|-----------------------|--------------|
+| Firecracker microVM isolation | Command blocking (seccomp) |
+| Ephemeral compute | File I/O policy (real_paths mode) |
+| API access to sandbox | Domain allowlist/blocklist |
+| Network-controlled environment | Cloud metadata blocking |
+| | Environment variable filtering |
+| | Secret detection and redaction (DLP) |
+| | Bash builtin interception (BASH_ENV) |
+| | Landlock execution restrictions |
+| | Approval-gated workspace deletes |
+| | LLM request auditing |
+| | Complete audit logging |
+
+## Security Capabilities in Deno Sandbox
 
 `agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie, agentsh v0.15.0):
 
@@ -40,20 +74,13 @@ CAPABILITIES
   seccomp_user_notify      YES
 ```
 
-### v0.15.0 features
-
-- **`real_paths` mode** -- alternative to FUSE for transparent command interception. When enabled, agentsh renames original binaries (e.g., `/bin/bash` → `/bin/bash.real`) and installs shims in their place. This works in Firecracker where `/dev/fuse` is unavailable.
-- **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically.
-- **Improved seccomp** -- enhanced seccomp filters with user_notify for better command interception.
-- **Version pinning** -- install script pins to a specific agentsh version (default: 0.15.0) instead of fetching `latest` from the GitHub API, removing the `jq` dependency and improving reproducibility.
-
 ### Why 80% is better than it sounds
 
 The 80% score reflects missing kernel features, but **the actual security posture is stronger than a bare sandbox** because of the layered enforcement that IS working:
 
 | Missing Feature | Impact |
 |-----------------|--------|
-| **Landlock network** | eBPF is available and more powerful — agentsh uses it for network filtering. The demos prove private IPs and metadata endpoints are blocked. |
+| **Landlock network** | eBPF is available and more powerful -- agentsh uses it for network filtering. The demos prove private IPs and metadata endpoints are blocked. |
 | **PID namespace** | Redundant in a Firecracker microVM. The VM boundary already isolates processes. |
 | **FUSE** | `/dev/fuse` is not exposed in the sandbox. Means no transparent filesystem virtualization. |
 
@@ -72,20 +99,6 @@ The 80% score reflects missing kernel features, but **the actual security postur
 
 This means the `file_rules` section in `default.yaml` defines the **intended** file policy, but it is not currently enforced at the kernel level. Command and network policies ARE enforced.
 
-The Firecracker microVM itself provides isolation that makes some agentsh features redundant:
-
-```
-┌─────────────────────────────────────┐
-│  Firecracker microVM (isolation)    │  ← VM boundary
-│  ┌───────────────────────────────┐  │
-│  │  agentsh (policy enforcement) │  │  ← Policy layer
-│  │  ┌─────────────────────────┐  │  │
-│  │  │  Your sandboxed code    │  │  │
-│  │  └─────────────────────────┘  │  │
-│  └───────────────────────────────┘  │
-└─────────────────────────────────────┘
-```
-
 ### What would fix file policy enforcement
 
 Either of these would enable kernel-level file_rules enforcement:
@@ -93,10 +106,6 @@ Either of these would enable kernel-level file_rules enforcement:
 1. **Mount securityfs** -- if the Deno sandbox exposed `/sys/kernel/security/landlock/`, Landlock v2 rules would apply. Requires changes to how Deno provisions sandbox containers.
 2. **Expose `/dev/fuse`** -- if FUSE were available, agentsh could virtualize the filesystem. Requires the FUSE kernel module and device node in the container.
 3. **Kernel upgrade to 6.7+** -- would additionally enable Landlock network enforcement (currently handled by eBPF).
-
-**Note:** `real_paths` mode (enabled in v0.15.0 config) provides transparent command interception without FUSE, but does not provide kernel-level file access control. It renames binaries and installs shims for command policy enforcement.
-
-**What's working:** Seccomp, eBPF, shell shim, cgroups v2, capability dropping, real_paths, BASH_ENV injection — all the enforcement mechanisms for command, network, and environment policy.
 
 ### Capability comparison
 
@@ -117,159 +126,117 @@ Either of these would enable kernel-level file_rules enforcement:
 | Network policy enforcement | yes | yes | Via eBPF + seccomp |
 | Env var policy enforcement | yes | yes | Via exec API + BASH_ENV |
 
-## Prerequisites
+## Quick Start
+
+### Prerequisites
 
 - [Deno](https://deno.land/) 2.x
 - A `DENO_DEPLOY_TOKEN` (get one from [Deno Deploy](https://dash.deno.com))
+- Set environment variables in `.env`:
+  ```
+  DENO_DEPLOY_TOKEN=your_token_here
+  ```
 
-## Setup
+### Build and Test
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/canyonroad/agentsh-deno
 cd agentsh-deno
 
-# Add your Deno Deploy token
-echo "DENO_DEPLOY_TOKEN=your_token_here" > .env
-```
+# Run the full test suite (38 tests)
+deno task test:full
 
-## Usage
-
-### Bootstrap a sandbox with agentsh
-
-```typescript
-import { createAgentshSandbox } from "./setup.ts";
-
-const sandbox = await createAgentshSandbox();
-// sandbox now has agentsh installed, server running, shell shim active
-
-// Run commands through the policy-enforced shell
-const output = await sandbox.sh`echo hello`.text();
-
-// Clean up
-await sandbox.close();
-```
-
-The bootstrap sequence:
-1. Creates a Deno Sandbox (Firecracker microVM)
-2. Installs system dependencies (curl, libseccomp2, sudo)
-3. Downloads and installs agentsh v0.15.0 from GitHub releases (pinned version)
-4. Creates directories and sets permissions
-5. Writes server config and security policy
-6. Starts the agentsh server
-7. Installs the shell shim (replaces /bin/bash)
-
-### Run the demos
-
-After setup, run any of the demos to see agentsh policy enforcement in action:
-
-```bash
-# Command blocking demo -- tests allowed/blocked commands
-deno task demo:blocking
-
-# Network policy demo -- tests allowed/blocked network targets
-deno task demo:network
-
-# Environment variable policy demo -- tests allowed/hidden env vars
-deno task demo:env
-
-# Sandbox verification tests
+# Run smoke tests (7 tests)
 deno task test
-
-# Run agentsh detect inside a sandbox
-deno run --allow-all --env-file=.env detect-sandbox.ts
 ```
 
-Each demo creates a fresh Deno Sandbox, bootstraps agentsh, runs the tests, and cleans up. Expect ~30-60 seconds for sandbox creation and package installation.
+## How It Works
 
-## What the demos test
-
-### demo-blocking.ts
-
-Tests command policy enforcement through agentsh exec:
-
-| Category | Commands | Expected |
-|---|---|---|
-| Safe commands | `echo`, `pwd`, `ls`, `date`, `python3`, `git` | ALLOWED |
-| Privilege escalation | `sudo`, `su`, `chroot` | BLOCKED |
-| Network tools | `ssh`, `nc` | BLOCKED |
-| System commands | `kill`, `shutdown`, `systemctl` | BLOCKED |
-| Recursive delete | `rm -rf`, `rm -r` | BLOCKED |
-| Single file delete | `rm file.txt` | ALLOWED |
-
-### demo-network.ts
-
-Tests network policy enforcement:
-
-| Target | Expected |
-|---|---|
-| Localhost (127.0.0.1:18080) | ALLOWED |
-| AWS metadata (169.254.169.254) | BLOCKED |
-| Private network (10.0.0.1) | BLOCKED |
-| Private network (172.16.0.1) | BLOCKED |
-| Private network (192.168.1.1) | BLOCKED |
-| npm registry (registry.npmjs.org) | ALLOWED |
-| PyPI (pypi.org) | ALLOWED |
-
-### demo-env.ts
-
-Tests environment variable policy enforcement. Injects test secrets into the sandbox environment before starting the agentsh server, then verifies the exec API correctly filters them:
-
-| Env Var | In Policy | Expected |
-|---|---|---|
-| PATH | allow list | VISIBLE |
-| HOME | allow list | VISIBLE |
-| TERM | allow list | VISIBLE |
-| AWS_SECRET_ACCESS_KEY | deny list | HIDDEN |
-| AWS_SESSION_TOKEN | deny list | HIDDEN |
-| OPENAI_API_KEY | deny list | HIDDEN |
-| DATABASE_URL | deny list | HIDDEN |
-| SECRET_SIGNING_KEY | deny list | HIDDEN |
-| MY_CUSTOM_SETTING | not listed | HIDDEN |
-| `printenv` (all) | block_iteration | filtered (14 vars, no secrets) |
-| `env` (all) | block_iteration | filtered (14 vars, no secrets) |
-
-### test-sandbox.ts
-
-Verification smoke tests:
-
-1. agentsh installation -- binary present and reports version
-2. Server health -- HTTP health check returns ok
-3. Policy file -- default.yaml present in /etc/agentsh/policies/
-4. Config file -- config.yaml present in /etc/agentsh/
-5. Shell shim -- /bin/bash.real exists (original bash backed up)
-6. Command through shim -- echo through /bin/bash works
-7. Session creation -- agentsh session create returns valid JSON with id
-
-## Project structure
+agentsh replaces `/bin/bash` with a [shell shim](https://www.agentsh.org/docs/#shell-shim) that routes every command through the policy engine:
 
 ```
-agentsh-deno/
-  setup.ts              # Bootstrap function: createAgentshSandbox()
-  config.yaml           # agentsh server configuration
-  default.yaml          # Security policy (default-deny allowlist)
-  demo-blocking.ts      # Command policy demo
-  demo-network.ts       # Network policy demo
-  demo-env.ts           # Environment variable policy demo
-  test-sandbox.ts       # Verification tests
-  detect-sandbox.ts     # Run agentsh detect inside sandbox
-  deno.json             # Deno project config and tasks
+sandbox.sh: /bin/bash -c "sudo whoami"
+                     |
+                     v
+            +-------------------+
+            |  Shell Shim       |  /bin/bash -> agentsh-shell-shim
+            |  (intercepts)     |
+            +--------+----------+
+                     |
+                     v
+            +-------------------+
+            |  agentsh server   |  Policy evaluation + seccomp
+            |  (auto-started)   |  + real_paths mode
+            +--------+----------+
+                     |
+              +------+------+
+              v             v
+        +----------+  +----------+
+        |  ALLOW   |  |  BLOCK   |
+        | exit: 0  |  | exit: 126|
+        +----------+  +----------+
 ```
+
+Every command that Deno Sandbox's `sandbox.sh` executes is automatically intercepted -- no explicit `agentsh exec` calls needed. The bootstrap script (`setup.ts`) installs the shell shim and starts the agentsh server on port 18080.
+
+agentsh v0.15.0 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
+
+### v0.15.0 features
+
+- **`real_paths` mode** -- alternative to FUSE for transparent command interception. Renames original binaries and installs shims. Works in Firecracker where `/dev/fuse` is unavailable.
+- **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically.
+- **Improved seccomp** -- enhanced seccomp filters with user_notify for better command interception.
+- **Version pinning** -- install script pins to a specific agentsh version (default: 0.15.0) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
 
 ## Configuration
 
-### config.yaml
+Security policy is defined in two files:
 
-Server configuration for agentsh v0.15.0: localhost-only binding (127.0.0.1:18080), no auth (sandbox-internal), gRPC on port 9090, `real_paths` mode enabled with `BASH_ENV` injection, version-pinned installation. Simplified from earlier versions — sandbox enforcement settings moved to the policy layer and `real_paths`/`env_inject` replace the old `fuse`/`network`/`cgroups`/`seccomp` subsections.
+- **`config.yaml`** -- Server configuration: `real_paths` mode, [DLP patterns](https://www.agentsh.org/docs/#llm-proxy), LLM proxy, [seccomp](https://www.agentsh.org/docs/#seccomp), [env_inject](https://www.agentsh.org/docs/#shell-shim) (BASH_ENV for builtin blocking)
+- **`default.yaml`** -- [Policy rules](https://www.agentsh.org/docs/#policy-reference): [command rules](https://www.agentsh.org/docs/#command-rules), [network rules](https://www.agentsh.org/docs/#network-rules), [file rules](https://www.agentsh.org/docs/#file-rules), [environment policy](https://www.agentsh.org/docs/#environment-policy)
 
-### default.yaml
+See the [agentsh documentation](https://www.agentsh.org/docs/) for the full policy reference.
 
-Security policy with default-deny allowlist covering:
-- **File rules** -- workspace read/write, approval-gated deletes, system read-only, credential denial (SSH, AWS, cloud, .env, git, passwd/shadow)
-- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked (IPv4 + IPv6), package registries + GitHub + CDNs allowed, unknown HTTPS requires approval
-- **Command rules** -- dangerous commands blocked first, risky ops require approval, safe commands + file operations allowed, `.real` binaries allowed for real_paths compatibility
-- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, BASH_ENV, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.); block_iteration disabled (requires env_shim_path configuration)
-- **Resource limits** -- max file size, process count, open files
-- **Audit** -- all operations logged
+## Project Structure
+
+```
+agentsh-deno/
+├── setup.ts              # Bootstrap function: createAgentshSandbox()
+├── config.yaml           # Server config (real_paths, seccomp, DLP, network)
+├── default.yaml          # Security policy (commands, network, files, env)
+├── test-template.ts      # Comprehensive test suite (38 tests)
+├── test-sandbox.ts       # Smoke tests (7 tests)
+├── detect-sandbox.ts     # Security capability diagnostics
+├── demo-blocking.ts      # Command and filesystem blocking
+├── demo-network.ts       # Network policy blocking
+├── demo-env.ts           # Environment variable filtering
+└── deno.json             # Deno project config and tasks
+```
+
+## Testing
+
+The `test-template.ts` script creates a Deno Sandbox and runs 38 security tests across 10 categories:
+
+- **Installation** -- agentsh binary version check
+- **Server & config** -- health check, policy/config files, real_paths enabled, BASH_ENV configured
+- **Shell shim** -- shim binary, bash.real preserved, echo through shim
+- **Security diagnostics** -- agentsh detect: seccomp, cgroups_v2, landlock, ebpf
+- **Command blocking** -- sudo, su, ssh, kill, rm -rf blocked; echo, git allowed
+- **Network blocking** -- npmjs.org allowed; metadata, private networks blocked
+- **Environment policy** -- sensitive vars filtered, HOME/PATH present, BASH_ENV set, unlisted vars hidden
+- **File I/O** -- workspace/tmp writes allowed; system file reads verified
+- **Multi-context blocking** -- direct exec API sudo/su/ssh blocked; safe commands via env/find allowed
+- **Credential blocking** -- ~/.ssh/id_rsa, ~/.aws/credentials blocked via exec API
+
+```bash
+deno task test:full
+```
+
+## Related Projects
+
+- [agentsh](https://github.com/canyonroad/agentsh) -- Runtime security for AI agents ([docs](https://www.agentsh.org/docs/))
+- [agentsh + E2B](https://github.com/canyonroad/e2b-agentsh) -- agentsh integration with E2B sandboxes
+- [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) -- Firecracker microVM sandbox platform
 
 ## License
 

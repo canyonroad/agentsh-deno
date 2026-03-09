@@ -3,9 +3,10 @@
     "@deno/sandbox": "jsr:@deno/sandbox"
   },
   "tasks": {
+    "test": "deno run --allow-net --allow-env --allow-read --env-file=.env test-sandbox.ts",
+    "test:full": "deno run --allow-net --allow-env --allow-read --env-file=.env test-template.ts",
     "demo:blocking": "deno run --allow-net --allow-env --allow-read --env-file=.env demo-blocking.ts",
     "demo:network": "deno run --allow-net --allow-env --allow-read --env-file=.env demo-network.ts",
-    "demo:env": "deno run --allow-net --allow-env --allow-read --env-file=.env demo-env.ts",
-    "test": "deno run --allow-net --allow-env --allow-read --env-file=.env test-sandbox.ts"
+    "demo:env": "deno run --allow-net --allow-env --allow-read --env-file=.env demo-env.ts"
   }
 }
