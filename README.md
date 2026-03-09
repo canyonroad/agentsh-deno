@@ -1,6 +1,6 @@
 # agentsh + Deno Sandbox
 
-Run AI agents inside [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) with [agentsh](https://www.agentsh.org) security policy enforcement.
+Run AI agents inside [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) with [agentsh](https://www.agentsh.org) v0.15.0 security policy enforcement.
 
 agentsh provides default-deny allowlists for file, network, process, and signal operations. Deno Sandboxes provide ephemeral Firecracker microVMs. Together, they give AI agents an isolated, policy-enforced execution environment.
 
@@ -9,16 +9,16 @@ agentsh provides default-deny allowlists for file, network, process, and signal 
 A bare Deno Sandbox is a Linux microVM with no security policy layer. This integration adds:
 
 - **Command policy enforcement** -- allowlist of permitted commands; blocks privilege escalation (`sudo`, `su`, `chroot`), network tools (`ssh`, `nc`), system commands (`kill`, `shutdown`, `systemctl`), and recursive deletes (`rm -rf`)
-- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 172.16.x, 192.168.x); allows localhost and package registries
-- **Environment variable policy** -- allowlist of visible env vars; secrets (AWS_*, OPENAI_API_KEY, DATABASE_URL, etc.) hidden from commands even if set in the server environment; enumeration filtered to prevent credential leakage
-- **File operation policy** -- workspace read/write with soft-delete (recoverable), read-only access to system paths, blocked access to credentials and secrets. **Note:** file_rules are defined but not currently kernel-enforced in this sandbox (see [capability comparison](#capability-comparison) below).
+- **Network policy enforcement** -- blocks cloud metadata endpoints (169.254.169.254), private network CIDRs (10.x, 172.16.x, 192.168.x, IPv6 fc00::/7, fe80::/10); allows localhost, package registries, GitHub; unknown HTTPS destinations require approval
+- **Environment variable policy** -- allowlist of visible env vars; secrets (AWS_*, OPENAI_API_KEY, DATABASE_URL, etc.) hidden from commands even if set in the server environment; BASH_ENV injection for shell startup hooks; enumeration filtered to prevent credential leakage
+- **File operation policy** -- workspace read/write with approval-gated deletes, read-only access to system paths, denied access to credentials and secrets (`/etc/passwd`, `/etc/shadow`, SSH keys, cloud creds). Uses `real_paths` mode for transparent command interception as an alternative to FUSE.
 - **Shell shim** -- transparent interception of all bash invocations through agentsh for policy enforcement
 - **Audit logging** -- all operations logged for review
 - **DLP redaction** -- sensitive patterns (API keys, tokens) redacted in output
 
 ## Security capabilities
 
-`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie):
+`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie, agentsh v0.15.0):
 
 ```
 Platform: linux
@@ -39,6 +39,13 @@ CAPABILITIES
   seccomp_basic            YES
   seccomp_user_notify      YES
 ```
+
+### v0.15.0 features
+
+- **`real_paths` mode** -- alternative to FUSE for transparent command interception. When enabled, agentsh renames original binaries (e.g., `/bin/bash` → `/bin/bash.real`) and installs shims in their place. This works in Firecracker where `/dev/fuse` is unavailable.
+- **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically.
+- **Improved seccomp** -- enhanced seccomp filters with user_notify for better command interception.
+- **Version pinning** -- install script pins to a specific agentsh version (default: 0.15.0) instead of fetching `latest` from the GitHub API, removing the `jq` dependency and improving reproducibility.
 
 ### Why 80% is better than it sounds
 
@@ -87,7 +94,9 @@ Either of these would enable kernel-level file_rules enforcement:
 2. **Expose `/dev/fuse`** -- if FUSE were available, agentsh could virtualize the filesystem. Requires the FUSE kernel module and device node in the container.
 3. **Kernel upgrade to 6.7+** -- would additionally enable Landlock network enforcement (currently handled by eBPF).
 
-**What's working:** Seccomp, eBPF, shell shim, cgroups v2, capability dropping — all the enforcement mechanisms for command, network, and environment policy.
+**Note:** `real_paths` mode (enabled in v0.15.0 config) provides transparent command interception without FUSE, but does not provide kernel-level file access control. It renames binaries and installs shims for command policy enforcement.
+
+**What's working:** Seccomp, eBPF, shell shim, cgroups v2, capability dropping, real_paths, BASH_ENV injection — all the enforcement mechanisms for command, network, and environment policy.
 
 ### Capability comparison
 
@@ -100,11 +109,13 @@ Either of these would enable kernel-level file_rules enforcement:
 | Landlock | v5 | detected v2 | **Detected but not enforcing** -- securityfs not mounted |
 | Landlock network | yes | no | eBPF provides equivalent filtering |
 | FUSE | yes | no | No /dev/fuse, no kernel module |
+| real_paths | yes | yes | Alternative to FUSE for command interception |
+| BASH_ENV | yes | yes | Shell startup hook injection |
 | PID namespace | no | no | Redundant in microVM |
 | File policy enforcement | yes | **no** | Needs working Landlock or FUSE |
-| Command policy enforcement | yes | yes | Via shell shim + seccomp |
+| Command policy enforcement | yes | yes | Via shell shim + seccomp + real_paths |
 | Network policy enforcement | yes | yes | Via eBPF + seccomp |
-| Env var policy enforcement | yes | yes | Via exec API |
+| Env var policy enforcement | yes | yes | Via exec API + BASH_ENV |
 
 ## Prerequisites
 
@@ -140,8 +151,8 @@ await sandbox.close();
 
 The bootstrap sequence:
 1. Creates a Deno Sandbox (Firecracker microVM)
-2. Installs system dependencies (curl, jq, libseccomp2, sudo)
-3. Downloads and installs agentsh from GitHub releases
+2. Installs system dependencies (curl, libseccomp2, sudo)
+3. Downloads and installs agentsh v0.15.0 from GitHub releases (pinned version)
 4. Creates directories and sets permissions
 5. Writes server config and security policy
 6. Starts the agentsh server
@@ -248,15 +259,15 @@ agentsh-deno/
 
 ### config.yaml
 
-Server configuration: localhost-only binding (127.0.0.1:18080), no auth (sandbox-internal), gRPC on port 9090, full security mode with all enforcement layers enabled.
+Server configuration for agentsh v0.15.0: localhost-only binding (127.0.0.1:18080), no auth (sandbox-internal), gRPC on port 9090, `real_paths` mode enabled with `BASH_ENV` injection, version-pinned installation. Simplified from earlier versions — sandbox enforcement settings moved to the policy layer and `real_paths`/`env_inject` replace the old `fuse`/`network`/`cgroups`/`seccomp` subsections.
 
 ### default.yaml
 
 Security policy with default-deny allowlist covering:
-- **File rules** -- workspace read/write, system read-only, credential blocking
-- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked, package registries allowed
-- **Command rules** -- safe commands allowed, privilege escalation blocked, network tools blocked, system commands blocked, recursive delete blocked
-- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.); block_iteration disabled (requires env_shim_path configuration)
+- **File rules** -- workspace read/write, approval-gated deletes, system read-only, credential denial (SSH, AWS, cloud, .env, git, passwd/shadow)
+- **Network rules** -- localhost allowed, cloud metadata blocked, private networks blocked (IPv4 + IPv6), package registries + GitHub + CDNs allowed, unknown HTTPS requires approval
+- **Command rules** -- dangerous commands blocked first, risky ops require approval, safe commands + file operations allowed, `.real` binaries allowed for real_paths compatibility
+- **Environment policy** -- allowlist (PATH, HOME, TERM, NODE_ENV, GIT_*, BASH_ENV, etc.), denylist (AWS_*, OPENAI_API_KEY, DATABASE_URL, SECRET_*, etc.); block_iteration disabled (requires env_shim_path configuration)
 - **Resource limits** -- max file size, process count, open files
 - **Audit** -- all operations logged
 

@@ -17,6 +17,8 @@ export interface AgentshSandboxOptions {
   agentshRepo?: string;
   /** Architecture for .deb package. Default: "amd64" */
   debArch?: string;
+  /** agentsh version to install. Default: "0.15.0" */
+  agentshVersion?: string;
   /** Workspace path inside sandbox. Default: "/app" */
   workspace?: string;
   /** Hosts to allow network access to. Needed for bootstrap (apt + GitHub). */
@@ -33,8 +35,8 @@ export interface AgentshSandboxOptions {
  * Create a Deno Sandbox with agentsh installed, configured, and running.
  *
  * Bootstrap sequence:
- *   1. Install system dependencies (curl, jq, libseccomp2, sudo)
- *   2. Download and install agentsh from GitHub releases (.deb)
+ *   1. Install system dependencies (curl, libseccomp2, sudo)
+ *   2. Download and install agentsh from GitHub releases (.deb, pinned version)
  *   3. Create required directories
  *   4. Write server config and security policy files
  *   5. Set permissions and passwordless sudo for agentsh
@@ -49,6 +51,7 @@ export async function createAgentshSandbox(
 ): Promise<Sandbox> {
   const repo = opts?.agentshRepo ?? "erans/agentsh";
   const arch = opts?.debArch ?? "amd64";
+  const version = opts?.agentshVersion ?? "0.15.0";
   const workspace = opts?.workspace ?? "/app";
 
   // -------------------------------------------------------------------------
@@ -74,27 +77,21 @@ export async function createAgentshSandbox(
     console.log("Installing system dependencies...");
     await sandbox.sh`mkdir -p /var/lib/apt/lists/partial`.sudo();
     await sandbox.sh`apt-get -o Acquire::Check-Valid-Until=false update`.sudo();
-    await sandbox.sh`apt-get install -y --no-install-recommends ca-certificates curl jq libseccomp2 sudo`.sudo();
+    await sandbox.sh`apt-get install -y --no-install-recommends ca-certificates curl libseccomp2 sudo`.sudo();
     await sandbox.sh`rm -rf /var/lib/apt/lists/*`.sudo();
 
     // -----------------------------------------------------------------------
     // 3. Download and install agentsh from GitHub releases
     //
-    // NOTE: The install script uses shell variables ($LATEST_TAG, $version,
-    // etc.). Because sandbox.sh is a tagged template literal, we must be
-    // careful not to let JS interpolation swallow shell $-expressions. We
-    // inject the *TypeScript* values (repo, arch) via template interpolation,
-    // and pass shell-variable references as raw text that the shell will
-    // expand at runtime.
+    // Pinned to a specific version for reproducible builds. The version
+    // is configurable via AgentshSandboxOptions.agentshVersion.
     // -----------------------------------------------------------------------
-    console.log("Installing agentsh...");
+    console.log(`Installing agentsh v${version}...`);
     const installScript = `#!/bin/bash
 set -eux
-LATEST_TAG=$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name')
-version="\${LATEST_TAG#v}"
-deb="agentsh_\${version}_linux_${arch}.deb"
-url="https://github.com/${repo}/releases/download/\${LATEST_TAG}/\${deb}"
-echo "Downloading agentsh \${LATEST_TAG}: \${url}"
+deb="agentsh_${version}_linux_${arch}.deb"
+url="https://github.com/${repo}/releases/download/v${version}/\${deb}"
+echo "Downloading agentsh v${version}: \${url}"
 curl -fsSL -L "\${url}" -o /tmp/agentsh.deb
 sudo dpkg -i /tmp/agentsh.deb
 rm -f /tmp/agentsh.deb

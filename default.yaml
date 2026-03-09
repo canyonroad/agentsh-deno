@@ -1,12 +1,12 @@
-# Agent Sandbox Policy for agentsh
+# Agent Sandbox Policy for agentsh v0.15.0
 # Maximum containment for running unknown/untrusted agent code
 
 version: 1
 name: default
 description: |
   High-security sandbox for AI agents running unknown code.
-  Default deny with explicit allowlist, approval for any credential access,
-  redirect network tools to internal proxies, soft-delete for recovery.
+  Default deny with explicit allowlist, deny credential access,
+  redirect network tools to internal proxies, approve for destructive ops.
 
 # =============================================================================
 # FILE OPERATION RULES
@@ -14,7 +14,7 @@ description: |
 
 file_rules:
   # ---------------------------------------------------------------------------
-  # Workspace - read/write allowed, deletes are soft (recoverable)
+  # Workspace - read/write allowed, deletes require approval (recoverable)
   # ---------------------------------------------------------------------------
 
   - name: allow-workspace-read
@@ -43,16 +43,17 @@ file_rules:
       - rename
     decision: allow
 
-  - name: soft-delete-workspace
-    description: Soft-delete files in workspace (recoverable)
+  - name: approve-workspace-delete
+    description: Require approval for workspace deletes
     paths:
       - "${PROJECT_ROOT}"
       - "${PROJECT_ROOT}/**"
     operations:
       - delete
       - rmdir
-    decision: soft_delete
-    message: "File quarantined (recoverable): {{.Path}}"
+    decision: approve
+    message: "Agent wants to delete: {{.Path}}"
+    timeout: 5m
 
   # ---------------------------------------------------------------------------
   # Temp directories - sandboxed
@@ -68,24 +69,8 @@ file_rules:
     decision: allow
 
   # ---------------------------------------------------------------------------
-  # Block dangerous binaries (before system read allow)
+  # Block sandbox internals
   # ---------------------------------------------------------------------------
-
-  - name: block-dangerous-binaries
-    description: Block execution of privilege escalation tools
-    paths:
-      - "/usr/bin/sudo"
-      - "/usr/bin/su"
-      - "/usr/bin/pkexec"
-      - "/usr/bin/doas"
-      - "/bin/su"
-      - "/usr/sbin/chroot"
-      - "/usr/bin/nsenter"
-      - "/usr/bin/unshare"
-    operations:
-      - "*"
-    decision: deny
-    message: "Access to privilege escalation tool blocked: {{.Path}}"
 
   - name: block-sandbox-internals
     description: Block access to sandbox infrastructure binaries and configs
@@ -96,6 +81,73 @@ file_rules:
       - "*"
     decision: deny
     message: "Access to sandbox/system infrastructure blocked: {{.Path}}"
+
+  # ---------------------------------------------------------------------------
+  # Deny credential/secret access
+  # ---------------------------------------------------------------------------
+
+  - name: deny-ssh-access
+    description: Block SSH key access
+    paths:
+      - "${HOME}/.ssh/**"
+      - "/root/.ssh/**"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to SSH keys blocked: {{.Path}}"
+
+  - name: deny-aws-credentials
+    description: Block AWS credentials
+    paths:
+      - "${HOME}/.aws/**"
+      - "/root/.aws/**"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to AWS credentials blocked: {{.Path}}"
+
+  - name: deny-cloud-credentials
+    description: Block cloud credentials
+    paths:
+      - "${HOME}/.gcloud/**"
+      - "${HOME}/.azure/**"
+      - "${HOME}/.config/gcloud/**"
+      - "${HOME}/.kube/**"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to cloud credentials blocked: {{.Path}}"
+
+  - name: deny-env-files
+    description: Block .env files
+    paths:
+      - "**/.env"
+      - "**/.env.*"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to environment file blocked: {{.Path}}"
+
+  - name: deny-git-credentials
+    description: Block git credentials
+    paths:
+      - "${HOME}/.git-credentials"
+      - "**/.netrc"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to git credentials blocked: {{.Path}}"
+
+  - name: deny-passwd-shadow
+    description: Block access to passwd and shadow files
+    paths:
+      - "/etc/passwd"
+      - "/etc/shadow"
+      - "/etc/gshadow"
+    operations:
+      - "*"
+    decision: deny
+    message: "Access to system auth files blocked: {{.Path}}"
 
   # ---------------------------------------------------------------------------
   # System paths - minimal read-only
@@ -109,6 +161,7 @@ file_rules:
       - "/lib64/**"
       - "/bin/**"
       - "/sbin/**"
+      - "/opt/**"
     operations:
       - read
       - open
@@ -126,72 +179,15 @@ file_rules:
       - "/etc/ssl/certs/**"
       - "/etc/ca-certificates/**"
       - "/etc/localtime"
+      - "/etc/timezone"
+      - "/etc/mime.types"
+      - "/etc/protocols"
+      - "/etc/services"
       - "/etc/agentsh/**"
     operations:
       - read
       - stat
     decision: allow
-
-  # ---------------------------------------------------------------------------
-  # APPROVE credential/secret access (not deny - visible decision)
-  # ---------------------------------------------------------------------------
-
-  - name: approve-ssh-access
-    description: Require approval for SSH key access
-    paths:
-      - "${HOME}/.ssh/**"
-      - "/root/.ssh/**"
-    operations:
-      - "*"
-    decision: approve
-    message: "Agent wants to access SSH keys: {{.Path}}"
-    timeout: 5m
-
-  - name: approve-aws-credentials
-    description: Require approval for AWS credentials
-    paths:
-      - "${HOME}/.aws/**"
-      - "/root/.aws/**"
-    operations:
-      - "*"
-    decision: approve
-    message: "Agent wants to access AWS credentials: {{.Path}}"
-    timeout: 5m
-
-  - name: approve-cloud-credentials
-    description: Require approval for cloud credentials
-    paths:
-      - "${HOME}/.gcloud/**"
-      - "${HOME}/.azure/**"
-      - "${HOME}/.config/gcloud/**"
-      - "${HOME}/.kube/**"
-    operations:
-      - "*"
-    decision: approve
-    message: "Agent wants to access cloud credentials: {{.Path}}"
-    timeout: 5m
-
-  - name: approve-env-files
-    description: Require approval for .env files
-    paths:
-      - "**/.env"
-      - "**/.env.*"
-    operations:
-      - "*"
-    decision: approve
-    message: "Agent wants to access environment file: {{.Path}}"
-    timeout: 5m
-
-  - name: approve-git-credentials
-    description: Require approval for git credentials
-    paths:
-      - "${HOME}/.git-credentials"
-      - "**/.netrc"
-    operations:
-      - "*"
-    decision: approve
-    message: "Agent wants to access git credentials: {{.Path}}"
-    timeout: 5m
 
   # ---------------------------------------------------------------------------
   # Package caches - read-only
@@ -251,7 +247,7 @@ network_rules:
     decision: allow
 
   # ---------------------------------------------------------------------------
-  # Package registries - redirect to internal mirrors if available
+  # Package registries
   # ---------------------------------------------------------------------------
 
   - name: allow-npm
@@ -285,6 +281,44 @@ network_rules:
     ports: [443]
     decision: allow
 
+  - name: allow-rubygems
+    description: RubyGems registry
+    domains:
+      - "rubygems.org"
+    ports: [443]
+    decision: allow
+
+  - name: allow-maven
+    description: Maven Central
+    domains:
+      - "repo1.maven.org"
+      - "central.sonatype.com"
+    ports: [443]
+    decision: allow
+
+  # ---------------------------------------------------------------------------
+  # GitHub and CDNs
+  # ---------------------------------------------------------------------------
+
+  - name: allow-github
+    description: GitHub and related services
+    domains:
+      - "github.com"
+      - "api.github.com"
+      - "raw.githubusercontent.com"
+      - "objects.githubusercontent.com"
+    ports: [443]
+    decision: allow
+
+  - name: allow-cdns
+    description: CDN and documentation sites
+    domains:
+      - "cdn.jsdelivr.net"
+      - "unpkg.com"
+      - "cdnjs.cloudflare.com"
+    ports: [443]
+    decision: allow
+
   # ---------------------------------------------------------------------------
   # Embedded LLM Proxy
   # ---------------------------------------------------------------------------
@@ -306,6 +340,8 @@ network_rules:
       - "172.16.0.0/12"
       - "192.168.0.0/16"
       - "169.254.0.0/16"
+      - "fc00::/7"
+      - "fe80::/10"
     decision: deny
 
   - name: block-metadata-services
@@ -335,8 +371,18 @@ network_rules:
     message: "Connection to untrusted domain blocked: {{.RemoteAddr}}"
 
   # ---------------------------------------------------------------------------
+  # Approve unknown HTTPS before default deny
+  # ---------------------------------------------------------------------------
+
+  - name: approve-unknown-https
+    description: Require approval for unrecognized HTTPS destinations
+    ports: [443]
+    decision: approve
+    message: "Agent wants to connect to unknown HTTPS destination: {{.RemoteAddr}}"
+    timeout: 5m
+
+  # ---------------------------------------------------------------------------
   # Default deny for all other destinations
-  # Only explicitly allowed domains/IPs can be accessed
   # ---------------------------------------------------------------------------
 
   - name: default-deny-network
@@ -351,6 +397,88 @@ network_rules:
 # =============================================================================
 
 command_rules:
+  # ---------------------------------------------------------------------------
+  # Block dangerous commands first
+  # ---------------------------------------------------------------------------
+
+  - name: block-shell-escape
+    description: Block potential shell escapes
+    commands:
+      - sudo
+      - su
+      - chroot
+      - nsenter
+      - unshare
+    decision: deny
+
+  - name: block-system-commands
+    description: Block system administration commands
+    commands:
+      - shutdown
+      - reboot
+      - systemctl
+      - service
+      - mount
+      - umount
+      - dd
+      - fdisk
+      - mkfs
+      - kill
+      - killall
+      - pkill
+    decision: deny
+
+  - name: block-network-tools
+    description: Block raw network tools
+    commands:
+      - nc
+      - netcat
+      - ncat
+      - socat
+      - telnet
+      - ssh
+      - scp
+      - rsync
+    decision: deny
+
+  - name: block-sandbox-interference
+    description: Block commands that could interfere with sandbox infrastructure
+    commands:
+      - iptables
+      - ip6tables
+      - nft
+      - tc
+      - ip
+    decision: deny
+    message: "Command blocked - could interfere with sandbox infrastructure"
+
+  - name: block-rm-recursive
+    description: Block recursive delete
+    commands:
+      - rm
+    args_patterns:
+      - ".*-r.*"
+      - ".*--recursive.*"
+    decision: deny
+    message: "Recursive delete blocked. Files can be removed individually."
+
+  # ---------------------------------------------------------------------------
+  # Approve risky commands
+  # ---------------------------------------------------------------------------
+
+  - name: approve-package-install
+    description: Require approval for package installation
+    commands:
+      - npm
+      - pip
+      - pip3
+      - cargo
+    args_patterns:
+      - "^install.*"
+      - "^add.*"
+    decision: approve
+    message: "Agent wants to install packages: {{.Args}}"
+
   # ---------------------------------------------------------------------------
   # Allow curl/wget - network rules will block malicious domains
   # ---------------------------------------------------------------------------
@@ -371,8 +499,12 @@ command_rules:
     commands:
       - bash
       - sh
+      - bash.real
+      - sh.real
       - /bin/bash
       - /bin/sh
+      - /bin/bash.real
+      - /bin/sh.real
       - /usr/bin/bash
       - /usr/bin/sh
       - ls
@@ -391,6 +523,22 @@ command_rules:
       - which
     decision: allow
 
+  - name: allow-file-operations
+    description: Safe file manipulation commands
+    commands:
+      - cp
+      - mv
+      - rm
+      - mkdir
+      - touch
+      - chmod
+      - ln
+      - readlink
+      - basename
+      - dirname
+      - realpath
+    decision: allow
+
   - name: allow-dev-tools
     description: Development tools
     commands:
@@ -405,89 +553,6 @@ command_rules:
       - go
       - make
     decision: allow
-
-  # ---------------------------------------------------------------------------
-  # Approve package installation
-  # ---------------------------------------------------------------------------
-
-  - name: approve-package-install
-    description: Require approval for package installation
-    commands:
-      - npm
-      - pip
-      - pip3
-      - cargo
-    args_patterns:
-      - "^install.*"
-      - "^add.*"
-    decision: approve
-    message: "Agent wants to install packages: {{.Args}}"
-
-  # ---------------------------------------------------------------------------
-  # Block dangerous commands
-  # ---------------------------------------------------------------------------
-
-  - name: block-rm-recursive
-    description: Block recursive delete
-    commands:
-      - rm
-    args_patterns:
-      - ".*-r.*"
-      - ".*--recursive.*"
-    decision: deny
-    message: "Recursive delete blocked. Files can be removed individually."
-
-  - name: block-network-tools
-    description: Block raw network tools
-    commands:
-      - nc
-      - netcat
-      - ncat
-      - socat
-      - telnet
-      - ssh
-      - scp
-      - rsync
-    decision: deny
-
-  - name: block-system-commands
-    description: Block system administration commands
-    commands:
-      - shutdown
-      - reboot
-      - systemctl
-      - service
-      - mount
-      - umount
-      - dd
-      - fdisk
-      - mkfs
-      - kill
-      - killall
-      - pkill
-    decision: deny
-
-  - name: block-shell-escape
-    description: Block potential shell escapes
-    commands:
-      - sudo
-      - su
-      - chroot
-      - nsenter
-      - unshare
-    decision: deny
-
-  - name: block-sandbox-interference
-    description: Block commands that could interfere with sandbox infrastructure
-    commands:
-      - socat
-      - iptables
-      - ip6tables
-      - nft
-      - tc
-      - ip
-    decision: deny
-    message: "Command blocked - could interfere with sandbox infrastructure"
 
   # ---------------------------------------------------------------------------
   # Allow all other commands
@@ -521,6 +586,7 @@ env_policy:
     - OLDPWD
     - SHLVL
     - _
+    - BASH_ENV
     # Node.js
     - NODE_ENV
     - NODE_PATH

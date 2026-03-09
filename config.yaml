@@ -21,10 +21,6 @@ logging:
 
 sessions:
   base_dir: "/var/lib/agentsh/sessions"
-  max_sessions: 100
-  default_timeout: "1h"
-  default_idle_timeout: "15m"
-  cleanup_interval: "5m"
 
 audit:
   enabled: true
@@ -32,34 +28,9 @@ audit:
     sqlite_path: "/var/lib/agentsh/events.db"
 
 sandbox:
-  enabled: true
-  allow_degraded: true  # Allow running in sandbox without all features
-
-  limits:
-    max_memory_mb: 4096
-    max_cpu_percent: 100
-    max_processes: 256
-
-  fuse:
-    enabled: true
-
-  network:
-    enabled: true
-    intercept_mode: "all"
-    proxy_listen_addr: "127.0.0.1:0"
-
-  cgroups:
-    enabled: true
-
-  seccomp:
-    enabled: true
-
-security:
-  mode: full
-  strict: true
-
-capabilities:
-  allow: []
+  env_inject:
+    BASH_ENV: "/usr/lib/agentsh/bash_startup.sh"
+  real_paths: true
 
 proxy:
   mode: "embedded"
@@ -104,7 +75,8 @@ dlp:
 
 policies:
   dir: "/etc/agentsh/policies"
-  default_policy: "default"
+  default: "default"
+  detect_project_root: true
 
 approvals:
   enabled: false
@@ -120,5 +92,5 @@ health:
   readiness_path: "/ready"
 
 development:
-  disable_auth: true
-  verbose_errors: false
+  debug: false
+  disable_policy: false

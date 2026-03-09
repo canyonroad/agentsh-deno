@@ -1,15 +1,16 @@
 /**
  * detect-sandbox.ts -- Diagnostic script to verify whether FUSE, Landlock,
- * and other kernel security features are actually working inside the Deno
- * sandbox running agentsh.
+ * real_paths, and other kernel security features are actually working inside
+ * the Deno sandbox running agentsh v0.15.0.
  *
  * Checks:
  *   1. `agentsh detect`       -- kernel feature detection summary
  *   2. `agentsh detect config` -- configuration-level detection (if available)
- *   3. Server log inspection   -- FUSE/Landlock related messages
- *   4. Landlock enforcement    -- attempt to read a denied path via shim vs direct
- *   5. FUSE mount check        -- look for fuse mounts
- *   6. Cleanup
+ *   3. Server log inspection   -- FUSE/Landlock/real_paths/BASH_ENV messages
+ *   4. real_paths and BASH_ENV -- verify v0.15.0 features are active
+ *   5. Landlock enforcement    -- attempt to read a denied path via shim vs direct
+ *   6. FUSE mount check        -- look for fuse mounts
+ *   7. Cleanup
  *
  * Usage:
  *   deno run --allow-all --env-file=.env detect-sandbox.ts
@@ -64,7 +65,7 @@ function subBanner(title: string): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  console.log("detect-sandbox.ts: Diagnosing FUSE and Landlock inside Deno sandbox\n");
+  console.log("detect-sandbox.ts: Diagnosing FUSE, Landlock, and real_paths inside Deno sandbox\n");
 
   const sandbox = await createAgentshSandbox();
 
@@ -141,9 +142,9 @@ async function main(): Promise<void> {
       console.log(`Error searching logs: ${err}`);
     }
 
-    subBanner("3d. Searching logs for sandbox/security/degraded messages");
+    subBanner("3d. Searching logs for sandbox/security/degraded/real_paths messages");
     try {
-      const sandboxLogs = await sandbox.sh`grep -ri -E '(sandbox|security|degraded|seccomp|cgroup|enforce)' /var/log/agentsh/ 2>&1 || echo "(no sandbox-related mentions found)"`.noThrow().text();
+      const sandboxLogs = await sandbox.sh`grep -ri -E '(sandbox|security|degraded|seccomp|cgroup|enforce|real_paths|real.paths|bash_env|env_inject|transparent)' /var/log/agentsh/ 2>&1 || echo "(no sandbox-related mentions found)"`.noThrow().text();
       console.log(sandboxLogs);
     } catch (err) {
       console.log(`Error searching logs: ${err}`);
@@ -156,6 +157,55 @@ async function main(): Promise<void> {
       console.log(dmesg);
     } catch (err) {
       console.log(`Error checking dmesg: ${err}`);
+    }
+
+    // =====================================================================
+    // 3f. v0.15.0 features: real_paths mode and BASH_ENV injection
+    // =====================================================================
+    banner("3f. v0.15.0 features (real_paths, BASH_ENV)");
+
+    subBanner("3f-i. Check if BASH_ENV is set in the shell environment");
+    try {
+      const bashEnv = await sandbox.sh`echo "BASH_ENV=$BASH_ENV"`.noThrow().text();
+      console.log(`  ${bashEnv.trim()}`);
+      if (bashEnv.includes("/usr/lib/agentsh/bash_startup.sh")) {
+        console.log("  -> BASH_ENV injection is ACTIVE");
+      } else {
+        console.log("  -> BASH_ENV is not set to agentsh startup script");
+      }
+    } catch (err) {
+      console.log(`Error checking BASH_ENV: ${err}`);
+    }
+
+    subBanner("3f-ii. Check if bash_startup.sh exists");
+    try {
+      const startupSh = await sandbox.sh`ls -la /usr/lib/agentsh/bash_startup.sh 2>&1 || echo "(file does not exist)"`.noThrow().text();
+      console.log(`  ${startupSh.trim()}`);
+    } catch (err) {
+      console.log(`Error: ${err}`);
+    }
+
+    subBanner("3f-iii. Check for real_paths mode in server config/logs");
+    try {
+      const realPathsConfig = await sandbox.sh`grep -i real_paths /etc/agentsh/config.yaml 2>&1 || echo "(real_paths not found in config)"`.noThrow().text();
+      console.log(`  Config: ${realPathsConfig.trim()}`);
+    } catch (err) {
+      console.log(`Error: ${err}`);
+    }
+
+    try {
+      const realPathsLogs = await sandbox.sh`grep -ri -E '(real.?paths|transparent.?command)' /var/log/agentsh/ 2>&1 || echo "(no real_paths mentions in logs)"`.noThrow().text();
+      console.log(`  Logs: ${realPathsLogs.trim()}`);
+    } catch (err) {
+      console.log(`Error: ${err}`);
+    }
+
+    subBanner("3f-iv. Check for .real binaries (real_paths mode indicator)");
+    try {
+      const realBinaries = await sandbox.sh`ls -la /bin/bash.real /bin/sh.real /usr/bin/bash.real /usr/bin/sh.real 2>&1 || echo "(no .real binaries found)"`.noThrow().text();
+      console.log(`  ${realBinaries.trim()}`);
+    } catch (err) {
+      console.log(`Error: ${err}`);
     }
 
     // =====================================================================
@@ -441,6 +491,8 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
     console.log(`
 Review the output above to determine:
   - Whether agentsh detects FUSE and Landlock as available
+  - Whether real_paths mode is active (section 3f)
+  - Whether BASH_ENV injection is working (section 3f)
   - Whether FUSE is actually mounted (section 5)
   - Whether Landlock enforcement is active (section 4: denied paths vs allowed)
   - Whether the policy layer (agentsh exec API) adds file restrictions
