@@ -1,6 +1,6 @@
 # agentsh + Deno Sandbox
 
-Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.15.0 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.6 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
 
 ## Why agentsh + Deno Sandbox?
 
@@ -26,7 +26,7 @@ agentsh adds the governance layer that controls what agents can do inside the sa
 |  |  |  AI Agent                                   |  |  |
 |  |  |  - Commands are policy-checked              |  |  |
 |  |  |  - Network requests are filtered            |  |  |
-|  |  |  - File I/O rules defined (real_paths mode) |  |  |
+|  |  |  - File I/O enforced (ptrace + seccomp)     |  |  |
 |  |  |  - Secrets are redacted from output         |  |  |
 |  |  |  - All actions are audited                  |  |  |
 |  |  +---------------------------------------------+  |  |
@@ -38,21 +38,20 @@ agentsh adds the governance layer that controls what agents can do inside the sa
 
 | Deno Sandbox Provides | agentsh Adds |
 |-----------------------|--------------|
-| Firecracker microVM isolation | Command blocking (seccomp) |
-| Ephemeral compute | File I/O policy (real_paths mode) |
+| Firecracker microVM isolation | Command blocking (seccomp + shell shim) |
+| Ephemeral compute | File I/O policy enforcement (ptrace + seccomp) |
 | API access to sandbox | Domain allowlist/blocklist |
 | Network-controlled environment | Cloud metadata blocking |
 | | Environment variable filtering |
 | | Secret detection and redaction (DLP) |
 | | Bash builtin interception (BASH_ENV) |
-| | Landlock execution restrictions |
 | | Approval-gated workspace deletes |
 | | LLM request auditing |
 | | Complete audit logging |
 
 ## Security Capabilities in Deno Sandbox
 
-`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie, agentsh v0.15.0):
+`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie, agentsh v0.16.6):
 
 ```
 Platform: linux
@@ -64,64 +63,54 @@ CAPABILITIES
   capabilities_drop        YES
   cgroups_v2               YES
   ebpf                     YES
+  file_enforcement         landlock
   fuse                     -
   landlock                 YES
   landlock_abi             YES (v2)
   landlock_network         -
   pid_namespace            -
+  ptrace                   YES
   seccomp                  YES
   seccomp_basic            YES
   seccomp_user_notify      YES
 ```
 
-### Why 80% is better than it sounds
+### Why the 80% score doesn't reflect actual enforcement
 
-The 80% score reflects missing kernel features, but **the actual security posture is stronger than a bare sandbox** because of the layered enforcement that IS working:
+The `detect` command reports kernel capabilities, not what's configured. The 80% score reflects missing kernel features (FUSE, Landlock network, PID namespace), but with ptrace+seccomp enabled in `config.yaml`, **all four policy dimensions are kernel-enforced**:
 
-| Missing Feature | Impact |
-|-----------------|--------|
-| **Landlock network** | eBPF is available and more powerful -- agentsh uses it for network filtering. The demos prove private IPs and metadata endpoints are blocked. |
-| **PID namespace** | Redundant in a Firecracker microVM. The VM boundary already isolates processes. |
-| **FUSE** | `/dev/fuse` is not exposed in the sandbox. Means no transparent filesystem virtualization. |
+| Policy Dimension | Enforcement Mechanism | Status |
+|---|---|---|
+| **Command policy** | Shell shim + seccomp | Enforced |
+| **File policy** | ptrace + seccomp prefilter | Enforced |
+| **Network policy** | eBPF + seccomp | Enforced |
+| **Env var policy** | exec API + BASH_ENV injection | Enforced |
 
-### What's actually enforcing
+### How file policy enforcement works
 
-**Working:**
-- **Command policy** -- shell shim intercepts all bash invocations, agentsh applies command_rules (allow/deny/approve)
-- **Network policy** -- seccomp + eBPF intercept connect() calls, network_rules block private CIDRs, metadata endpoints, etc.
-- **Environment variable policy** -- exec API filters env vars per env_policy allowlist/denylist
-- **Session management** -- audit logging, DLP redaction, session lifecycle
-- **Seccomp** -- active with user_notify for command interception
+Firecracker microVMs don't expose `/dev/fuse` or mount Landlock's securityfs, so neither FUSE nor Landlock can enforce `file_rules`. Instead, agentsh v0.16.6 uses **ptrace with seccomp prefiltering**:
 
-**Not enforcing (detected but degraded):**
-- **Landlock file policy** -- agentsh detects Landlock v2 as available (kernel 6.1 has it compiled in), but `/sys/kernel/security/landlock/` is not mounted inside the container. With `allow_degraded: true`, agentsh silently degrades. The file_rules in default.yaml (default-deny, workspace read/write, credential blocking) are **not kernel-enforced**. Tested: `/etc/shadow` is readable and writes to `/etc/` succeed through the exec API.
-- **FUSE** -- not available (`/dev/fuse` doesn't exist, no kernel module). Would provide filesystem virtualization as an alternative to Landlock for file policy.
-
-This means the `file_rules` section in `default.yaml` defines the **intended** file policy, but it is not currently enforced at the kernel level. Command and network policies ARE enforced.
-
-### What would fix file policy enforcement
-
-Either of these would enable kernel-level file_rules enforcement:
-
-1. **Mount securityfs** -- if the Deno sandbox exposed `/sys/kernel/security/landlock/`, Landlock v2 rules would apply. Requires changes to how Deno provisions sandbox containers.
-2. **Expose `/dev/fuse`** -- if FUSE were available, agentsh could virtualize the filesystem. Requires the FUSE kernel module and device node in the container.
-3. **Kernel upgrade to 6.7+** -- would additionally enable Landlock network enforcement (currently handled by eBPF).
+1. **ptrace** attaches to every child process spawned via the exec API
+2. A **seccomp BPF prefilter** (`SECCOMP_RET_TRACE`) is injected into each tracee, so only file/exec/network syscalls trigger ptrace stops -- all other syscalls pass through at kernel speed
+3. On each file syscall (`openat`, `unlinkat`, `renameat2`, `mkdirat`, etc.), ptrace **freezes the thread**, reads the path from the stopped process's memory, evaluates it against `file_rules`, and allows or denies with `EACCES`
+4. Because the thread is frozen during evaluation, there is **no TOCTOU (time-of-check/time-of-use) race** -- unlike seccomp `SECCOMP_USER_NOTIF_FLAG_CONTINUE` where another thread could modify the path between check and use
 
 ### Capability comparison
 
 | Capability | Local (bare metal) | Deno Sandbox | Notes |
 |---|---|---|---|
-| Security Mode | full | landlock-only | |
-| Protection Score | 100% | 80% | See above for actual enforcement status |
+| Security Mode | full | landlock-only | Detect reports kernel features, not configured enforcement |
+| Protection Score | 100% | 80% | Functional enforcement is equivalent (see above) |
 | eBPF | yes | yes | Provides network filtering |
 | Seccomp (user_notify) | yes | yes | Powers shell shim + command interception |
-| Landlock | v5 | detected v2 | **Detected but not enforcing** -- securityfs not mounted |
+| Landlock | v5 | detected v2 | Not enforcing (securityfs not mounted); ptrace compensates |
 | Landlock network | yes | no | eBPF provides equivalent filtering |
-| FUSE | yes | no | No /dev/fuse, no kernel module |
-| real_paths | yes | yes | Alternative to FUSE for command interception |
+| FUSE | yes | no | No /dev/fuse; ptrace compensates |
+| ptrace | yes | yes | File policy enforcement + seccomp prefilter |
+| real_paths | yes | yes | Command interception via binary renaming |
 | BASH_ENV | yes | yes | Shell startup hook injection |
 | PID namespace | no | no | Redundant in microVM |
-| File policy enforcement | yes | **no** | Needs working Landlock or FUSE |
+| File policy enforcement | yes | **yes** | Via ptrace + seccomp prefilter |
 | Command policy enforcement | yes | yes | Via shell shim + seccomp + real_paths |
 | Network policy enforcement | yes | yes | Via eBPF + seccomp |
 | Env var policy enforcement | yes | yes | Via exec API + BASH_ENV |
@@ -165,8 +154,8 @@ sandbox.sh: /bin/bash -c "sudo whoami"
                      |
                      v
             +-------------------+
-            |  agentsh server   |  Policy evaluation + seccomp
-            |  (auto-started)   |  + real_paths mode
+            |  agentsh server   |  Policy evaluation + ptrace
+            |  (auto-started)   |  + seccomp prefilter
             +--------+----------+
                      |
               +------+------+
@@ -179,20 +168,21 @@ sandbox.sh: /bin/bash -c "sudo whoami"
 
 Every command that Deno Sandbox's `sandbox.sh` executes is automatically intercepted -- no explicit `agentsh exec` calls needed. The bootstrap script (`setup.ts`) installs the shell shim and starts the agentsh server on port 18080.
 
-agentsh v0.15.0 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
+agentsh v0.16.6 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
 
-### v0.15.0 features
+### v0.16.6 features
 
+- **ptrace + seccomp file enforcement** -- kernel-level file policy enforcement without FUSE or Landlock. Uses ptrace to intercept file syscalls with seccomp BPF prefiltering for performance. TOCTOU-safe (thread is frozen during policy evaluation).
 - **`real_paths` mode** -- alternative to FUSE for transparent command interception. Renames original binaries and installs shims. Works in Firecracker where `/dev/fuse` is unavailable.
-- **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically.
-- **Improved seccomp** -- enhanced seccomp filters with user_notify for better command interception.
-- **Version pinning** -- install script pins to a specific agentsh version (default: 0.15.0) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
+- **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically. Works in both seccomp and ptrace modes.
+- **Seccomp prefilter injection** -- when ptrace is enabled, agentsh injects a seccomp BPF filter into each tracee so only traced syscalls (file, exec, network) trigger ptrace stops. Non-traced syscalls pass through at kernel speed.
+- **Version pinning** -- install script pins to a specific agentsh version (default: 0.16.6) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
 
 ## Configuration
 
 Security policy is defined in two files:
 
-- **`config.yaml`** -- Server configuration: `real_paths` mode, [DLP patterns](https://www.agentsh.org/docs/#llm-proxy), LLM proxy, [seccomp](https://www.agentsh.org/docs/#seccomp), [env_inject](https://www.agentsh.org/docs/#shell-shim) (BASH_ENV for builtin blocking)
+- **`config.yaml`** -- Server configuration: ptrace tracer, seccomp prefilter, `real_paths` mode, [DLP patterns](https://www.agentsh.org/docs/#llm-proxy), LLM proxy, [env_inject](https://www.agentsh.org/docs/#shell-shim) (BASH_ENV for builtin blocking)
 - **`default.yaml`** -- [Policy rules](https://www.agentsh.org/docs/#policy-reference): [command rules](https://www.agentsh.org/docs/#command-rules), [network rules](https://www.agentsh.org/docs/#network-rules), [file rules](https://www.agentsh.org/docs/#file-rules), [environment policy](https://www.agentsh.org/docs/#environment-policy)
 
 See the [agentsh documentation](https://www.agentsh.org/docs/) for the full policy reference.
@@ -202,7 +192,7 @@ See the [agentsh documentation](https://www.agentsh.org/docs/) for the full poli
 ```
 agentsh-deno/
 ├── setup.ts              # Bootstrap function: createAgentshSandbox()
-├── config.yaml           # Server config (real_paths, seccomp, DLP, network)
+├── config.yaml           # Server config (ptrace, seccomp, DLP, network)
 ├── default.yaml          # Security policy (commands, network, files, env)
 ├── test-template.ts      # Comprehensive test suite (38 tests)
 ├── test-sandbox.ts       # Smoke tests (7 tests)

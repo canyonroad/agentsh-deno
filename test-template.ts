@@ -89,7 +89,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  console.log("Creating sandbox with agentsh v0.15.0...");
+  console.log("Creating sandbox with agentsh v0.16.6...");
   const sandbox = await createAgentshSandbox({
     envVars: {
       // Inject test secrets that env_policy should hide
@@ -111,7 +111,7 @@ async function main() {
 
     await test("agentsh installed", async () => {
       const r = (await sandbox.sh`agentsh --version`.text()).trim();
-      return r.includes("agentsh") && r.includes("0.15.0");
+      return r.includes("agentsh") && r.includes("0.16.6");
     });
 
     // =========================================================================

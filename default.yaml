@@ -1,4 +1,4 @@
-# Agent Sandbox Policy for agentsh v0.15.0
+# Agent Sandbox Policy for agentsh v0.16.6
 # Maximum containment for running unknown/untrusted agent code
 
 version: 1
@@ -138,16 +138,26 @@ file_rules:
     decision: deny
     message: "Access to git credentials blocked: {{.Path}}"
 
-  - name: deny-passwd-shadow
-    description: Block access to passwd and shadow files
+  - name: deny-shadow-files
+    description: Block access to shadow and gshadow files
     paths:
-      - "/etc/passwd"
       - "/etc/shadow"
       - "/etc/gshadow"
     operations:
       - "*"
     decision: deny
     message: "Access to system auth files blocked: {{.Path}}"
+
+  - name: allow-passwd-read
+    description: Allow reading /etc/passwd (not sensitive, only usernames)
+    paths:
+      - "/etc/passwd"
+      - "/etc/group"
+    operations:
+      - read
+      - open
+      - stat
+    decision: allow
 
   # ---------------------------------------------------------------------------
   # System paths - minimal read-only
@@ -172,21 +182,34 @@ file_rules:
     decision: allow
 
   - name: allow-etc-minimal
-    description: Read minimal config files
+    description: Read minimal config files needed for DNS, SSL, and basic operations
     paths:
       - "/etc/hosts"
       - "/etc/resolv.conf"
-      - "/etc/ssl/certs/**"
+      - "/etc/nsswitch.conf"
+      - "/etc/host.conf"
+      - "/etc/gai.conf"
+      - "/etc/ssl/**"
       - "/etc/ca-certificates/**"
+      - "/etc/pki/**"
       - "/etc/localtime"
       - "/etc/timezone"
       - "/etc/mime.types"
       - "/etc/protocols"
       - "/etc/services"
       - "/etc/agentsh/**"
+      - "/etc/ld.so.cache"
+      - "/etc/ld.so.conf"
+      - "/etc/ld.so.conf.d/**"
+      - "/etc/alternatives/**"
+      - "/etc/environment"
+      - "/etc/default/**"
+      - "/etc/login.defs"
     operations:
       - read
+      - open
       - stat
+      - readlink
     decision: allow
 
   # ---------------------------------------------------------------------------
@@ -213,8 +236,38 @@ file_rules:
   # DENY everything else
   # ---------------------------------------------------------------------------
 
+  - name: allow-proc-self
+    description: Allow process self-inspection
+    paths:
+      - "/proc/self/**"
+      - "/proc/thread-self/**"
+    operations:
+      - read
+      - open
+      - stat
+      - readlink
+    decision: allow
+
+  - name: allow-dev-basics
+    description: Allow basic device access
+    paths:
+      - "/dev/null"
+      - "/dev/zero"
+      - "/dev/urandom"
+      - "/dev/random"
+      - "/dev/stdin"
+      - "/dev/stdout"
+      - "/dev/stderr"
+      - "/dev/fd/**"
+    operations:
+      - read
+      - write
+      - open
+      - stat
+    decision: allow
+
   - name: deny-proc-sys
-    description: Block /proc and /sys
+    description: Block /proc and /sys (except self, handled above)
     paths:
       - "/proc/**"
       - "/sys/**"

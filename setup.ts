@@ -17,7 +17,7 @@ export interface AgentshSandboxOptions {
   agentshRepo?: string;
   /** Architecture for .deb package. Default: "amd64" */
   debArch?: string;
-  /** agentsh version to install. Default: "0.15.0" */
+  /** agentsh version to install. Default: "0.16.6" */
   agentshVersion?: string;
   /** Workspace path inside sandbox. Default: "/app" */
   workspace?: string;
@@ -51,7 +51,7 @@ export async function createAgentshSandbox(
 ): Promise<Sandbox> {
   const repo = opts?.agentshRepo ?? "erans/agentsh";
   const arch = opts?.debArch ?? "amd64";
-  const version = opts?.agentshVersion ?? "0.15.0";
+  const version = opts?.agentshVersion ?? "0.16.6";
   const workspace = opts?.workspace ?? "/app";
 
   // -------------------------------------------------------------------------
