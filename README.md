@@ -49,71 +49,23 @@ agentsh adds the governance layer that controls what agents can do inside the sa
 | | LLM request auditing |
 | | Complete audit logging |
 
-## Security Capabilities in Deno Sandbox
+## Security Enforcement
 
-`agentsh detect` output inside a Deno Sandbox (Firecracker microVM, Debian Trixie, agentsh v0.16.6):
+agentsh v0.16.6 uses **ptrace with seccomp prefiltering** to enforce all policy dimensions at the kernel level:
 
-```
-Platform: linux
-Security Mode: landlock-only
-Protection Score: 80%
-
-CAPABILITIES
-----------------------------------------
-  capabilities_drop        YES
-  cgroups_v2               YES
-  ebpf                     YES
-  file_enforcement         landlock
-  fuse                     -
-  landlock                 YES
-  landlock_abi             YES (v2)
-  landlock_network         -
-  pid_namespace            -
-  ptrace                   YES
-  seccomp                  YES
-  seccomp_basic            YES
-  seccomp_user_notify      YES
-```
-
-### Why the 80% score doesn't reflect actual enforcement
-
-The `detect` command reports kernel capabilities, not what's configured. The 80% score reflects missing kernel features (FUSE, Landlock network, PID namespace), but with ptrace+seccomp enabled in `config.yaml`, **all four policy dimensions are kernel-enforced**:
-
-| Policy Dimension | Enforcement Mechanism | Status |
+| Policy Dimension | Enforcement Mechanism | What It Does |
 |---|---|---|
-| **Command policy** | Shell shim + seccomp | Enforced |
-| **File policy** | ptrace + seccomp prefilter | Enforced |
-| **Network policy** | eBPF + seccomp | Enforced |
-| **Env var policy** | exec API + BASH_ENV injection | Enforced |
+| **Command policy** | Shell shim + seccomp | Blocks dangerous commands (sudo, ssh, kill, etc.) |
+| **File policy** | ptrace + seccomp prefilter | Blocks reads/writes to credential files, system paths; allows workspace |
+| **Network policy** | eBPF + seccomp | Blocks private CIDRs, cloud metadata endpoints, unauthorized domains |
+| **Env var policy** | exec API + BASH_ENV injection | Filters sensitive env vars (AWS keys, tokens); injects shell hooks |
 
-### How file policy enforcement works
-
-Firecracker microVMs don't expose `/dev/fuse` or mount Landlock's securityfs, so neither FUSE nor Landlock can enforce `file_rules`. Instead, agentsh v0.16.6 uses **ptrace with seccomp prefiltering**:
+### How ptrace + seccomp file enforcement works
 
 1. **ptrace** attaches to every child process spawned via the exec API
 2. A **seccomp BPF prefilter** (`SECCOMP_RET_TRACE`) is injected into each tracee, so only file/exec/network syscalls trigger ptrace stops -- all other syscalls pass through at kernel speed
 3. On each file syscall (`openat`, `unlinkat`, `renameat2`, `mkdirat`, etc.), ptrace **freezes the thread**, reads the path from the stopped process's memory, evaluates it against `file_rules`, and allows or denies with `EACCES`
-4. Because the thread is frozen during evaluation, there is **no TOCTOU (time-of-check/time-of-use) race** -- unlike seccomp `SECCOMP_USER_NOTIF_FLAG_CONTINUE` where another thread could modify the path between check and use
-
-### Capability comparison
-
-| Capability | Local (bare metal) | Deno Sandbox | Notes |
-|---|---|---|---|
-| Security Mode | full | landlock-only | Detect reports kernel features, not configured enforcement |
-| Protection Score | 100% | 80% | Functional enforcement is equivalent (see above) |
-| eBPF | yes | yes | Provides network filtering |
-| Seccomp (user_notify) | yes | yes | Powers shell shim + command interception |
-| Landlock | v5 | detected v2 | Not enforcing (securityfs not mounted); ptrace compensates |
-| Landlock network | yes | no | eBPF provides equivalent filtering |
-| FUSE | yes | no | No /dev/fuse; ptrace compensates |
-| ptrace | yes | yes | File policy enforcement + seccomp prefilter |
-| real_paths | yes | yes | Command interception via binary renaming |
-| BASH_ENV | yes | yes | Shell startup hook injection |
-| PID namespace | no | no | Redundant in microVM |
-| File policy enforcement | yes | **yes** | Via ptrace + seccomp prefilter |
-| Command policy enforcement | yes | yes | Via shell shim + seccomp + real_paths |
-| Network policy enforcement | yes | yes | Via eBPF + seccomp |
-| Env var policy enforcement | yes | yes | Via exec API + BASH_ENV |
+4. Because the thread is frozen during evaluation, there is **no TOCTOU (time-of-check/time-of-use) race**
 
 ## Capabilities on Deno Sandboxes
 
@@ -127,9 +79,8 @@ Firecracker microVMs don't expose `/dev/fuse` or mount Landlock's securityfs, so
 | DLP | Working | Secret detection and redaction in LLM traffic |
 | Audit logging | Working | All operations logged |
 | BASH_ENV | Working | Shell startup hook injection for builtin interception |
-| Landlock | Detected, not enforcing | Kernel 6.1 has Landlock v2 but `/sys/kernel/security/landlock/` not mounted |
 | FUSE | Not available | `/dev/fuse` not exposed in Firecracker VM |
-| cgroups v2 | Detected | Available but read-only |
+| Landlock | Detected, not enforcing | Kernel has Landlock v2 but securityfs not mounted; ptrace used instead |
 | PID namespace | Not available | Not available in Firecracker config |
 
 ## For Deno Engineers: What to Enable
