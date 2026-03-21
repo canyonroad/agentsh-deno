@@ -305,9 +305,6 @@ deno task test:full
 ## Related Projects
 
 - [agentsh](https://github.com/canyonroad/agentsh) -- Runtime security for AI agents ([docs](https://www.agentsh.org/docs/))
-- [agentsh + E2B](https://github.com/canyonroad/e2b-agentsh) -- agentsh integration with E2B sandboxes
-- [agentsh + Daytona](https://github.com/canyonroad/agentsh-daytona) -- agentsh integration with Daytona sandboxes
-- [agentsh + Cloudflare](https://github.com/canyonroad/agentsh-cloudflare) -- agentsh integration with Cloudflare Containers
 - [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) -- Firecracker microVM sandbox platform
 
 ## License
