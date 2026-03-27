@@ -1,13 +1,13 @@
 /**
  * detect-sandbox.ts -- Diagnostic script to verify whether FUSE, Landlock,
  * real_paths, and other kernel security features are actually working inside
- * the Deno sandbox running agentsh v0.16.6.
+ * the Deno sandbox running agentsh v0.16.8.
  *
  * Checks:
  *   1. `agentsh detect`       -- kernel feature detection summary
  *   2. `agentsh detect config` -- configuration-level detection (if available)
  *   3. Server log inspection   -- FUSE/Landlock/real_paths/BASH_ENV messages
- *   4. real_paths and BASH_ENV -- verify v0.16.6 features are active
+ *   4. real_paths and BASH_ENV -- verify v0.16.8 features are active
  *   5. Landlock enforcement    -- attempt to read a denied path via shim vs direct
  *   6. FUSE mount check        -- look for fuse mounts
  *   7. Cleanup
@@ -160,9 +160,9 @@ async function main(): Promise<void> {
     }
 
     // =====================================================================
-    // 3f. v0.16.6 features: real_paths mode and BASH_ENV injection
+    // 3f. v0.16.8 features: real_paths mode and BASH_ENV injection
     // =====================================================================
-    banner("3f. v0.16.6 features (real_paths, BASH_ENV)");
+    banner("3f. v0.16.8 features (real_paths, BASH_ENV)");
 
     subBanner("3f-i. Check if BASH_ENV is set in the shell environment");
     try {

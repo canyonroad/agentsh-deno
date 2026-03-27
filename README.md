@@ -1,6 +1,6 @@
 # agentsh + Deno Sandbox
 
-Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.6 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.16.8 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
 
 ## Why agentsh + Deno Sandbox?
 
@@ -51,13 +51,13 @@ agentsh adds the governance layer that controls what agents can do inside the sa
 
 ## Security Enforcement
 
-agentsh v0.16.6 uses **ptrace with seccomp prefiltering** to enforce all policy dimensions at the kernel level:
+agentsh v0.16.8 uses **ptrace with seccomp prefiltering** to enforce all policy dimensions at the kernel level:
 
 | Policy Dimension | Enforcement Mechanism | What It Does |
 |---|---|---|
 | **Command policy** | Shell shim + seccomp | Blocks dangerous commands (sudo, ssh, kill, etc.) |
 | **File policy** | ptrace + seccomp prefilter | Blocks reads/writes to credential files, system paths; allows workspace |
-| **Network policy** | eBPF + seccomp | Blocks private CIDRs, cloud metadata endpoints, unauthorized domains |
+| **Network policy** | Proxy + DNS proxy | Blocks private CIDRs, cloud metadata endpoints, unauthorized domains |
 | **Env var policy** | exec API + BASH_ENV injection | Filters sensitive env vars (AWS keys, tokens); injects shell hooks |
 
 ### How ptrace + seccomp file enforcement works
@@ -72,38 +72,32 @@ agentsh v0.16.6 uses **ptrace with seccomp prefiltering** to enforce all policy 
 | Capability | Status | Notes |
 |------------|--------|-------|
 | ptrace | Working | Syscall-level enforcement: execve, file, network, signal interception |
-| seccomp | Working | Command interception via `seccomp_user_notify` |
+| seccomp | Working | Command interception via `seccomp_user_notify` + `seccomp-execve` |
 | seccomp prefilter | Working | BPF pre-filter injected into tracees, reduces ptrace overhead |
-| eBPF | Working | Network filtering (private CIDRs, metadata endpoints) |
-| Network proxy | Working | Domain/IP/port filtering via agentsh proxy |
+| Landlock | Working | Active file protection backend (ABI v2); kernel path restrictions |
+| Network proxy | Working | Domain/IP/port filtering via agentsh proxy + DNS proxy |
 | DLP | Working | Secret detection and redaction in LLM traffic |
 | Audit logging | Working | All operations logged |
 | BASH_ENV | Working | Shell startup hook injection for builtin interception |
+| Capability drop | Working | Privilege reduction via `capget` + `prctl` |
 | FUSE | Not available | `/dev/fuse` not exposed in Firecracker VM |
-| Landlock | Detected, not enforcing | Kernel has Landlock v2 but securityfs not mounted; ptrace used instead |
+| eBPF | Not available | Missing `CAP_BPF`; network filtering handled by proxy instead |
+| cgroups v2 | Not available | Firecracker VM uses cgroup v1; resource limits unavailable |
 | PID namespace | Not available | Not available in Firecracker config |
 
 ## For Deno Engineers: What to Enable
 
-**Note**: All core security enforcement works today using ptrace + seccomp. ptrace intercepts syscalls (execve, file I/O, network, signals) and enforces policy rules. The seccomp BPF prefilter ensures only traced syscalls trigger ptrace stops for minimal overhead. Together they provide **full policy enforcement across commands, files, network, and environment variables** with no Deno-side changes needed.
+**Note**: All core security enforcement works today using Landlock, ptrace, and seccomp. Landlock provides kernel-native file path restrictions. ptrace intercepts syscalls (execve, file I/O, network, signals) and enforces policy rules. The seccomp BPF prefilter ensures only traced syscalls trigger ptrace stops for minimal overhead. Together they provide **full policy enforcement across commands, files, network, and environment variables** with no Deno-side changes needed.
 
 The features below are optional enhancements, not requirements.
 
-### Landlock (`/sys/kernel/security/landlock/`) -- Medium Impact
+### Landlock (`/sys/kernel/security/landlock/`) -- Working
 
-**Current state**: The Firecracker kernel (6.1) has Landlock v2 compiled in, and agentsh detects it. But `/sys/kernel/security/landlock/` is not mounted inside the VM, so Landlock rules cannot be applied. agentsh degrades silently and uses ptrace for file enforcement instead.
+**Current state**: Landlock v2 is the **active file protection backend** in v0.16.8. agentsh uses Landlock for kernel-native path restrictions, with seccomp-notify as a secondary enforcement layer.
 
-**What it would add** (beyond what ptrace already enforces):
-- **Kernel-native file policy** -- Landlock is an LSM (Linux Security Module) that enforces file access rules directly in the kernel, with zero userspace overhead per syscall. It's faster than ptrace for file enforcement.
-- **Reduced ptrace scope** -- with Landlock handling file policy, ptrace could be limited to exec and network interception, reducing the number of ptrace stops.
-
-**Not needed for**: File enforcement works today via ptrace. Landlock would be a performance optimization, not a functional gap.
-
-**How to enable**: Mount securityfs inside the Firecracker VM guest:
-```
-mount -t securityfs securityfs /sys/kernel/security
-```
-This requires either a guest init script change or exposing the mount in the Firecracker VM template. The kernel already has Landlock compiled in -- it just needs the securityfs mount point.
+**What it provides**:
+- **Kernel-native file policy** -- Landlock is an LSM (Linux Security Module) that enforces file access rules directly in the kernel, with zero userspace overhead per syscall.
+- **Combined with ptrace** -- ptrace handles exec and network interception, while Landlock handles file path restrictions.
 
 ### FUSE (`/dev/fuse`) -- Nice to Have
 
@@ -119,12 +113,12 @@ This requires either a guest init script change or exposing the mount in the Fir
 
 ### Landlock Network (kernel 6.7+) -- Low Impact
 
-**Current state**: The Firecracker kernel is 6.1, which predates Landlock network support (added in 6.7, ABI v4). Network filtering is handled by eBPF instead.
+**Current state**: The Firecracker kernel is 6.1, which predates Landlock network support (added in 6.7, ABI v4). Network filtering is handled by the agentsh proxy and DNS proxy instead.
 
 **What it would add**:
-- **Kernel-native network policy** -- Landlock v4 can restrict `connect()` and `bind()` by port. Currently eBPF provides equivalent filtering.
+- **Kernel-native network policy** -- Landlock v4 can restrict `connect()` and `bind()` by port. Currently the agentsh proxy provides equivalent filtering.
 
-**Not needed for**: Network enforcement works today via eBPF + seccomp.
+**Not needed for**: Network enforcement works today via the agentsh proxy + DNS proxy.
 
 **How to enable**: Upgrade the Firecracker guest kernel to 6.7+.
 
@@ -141,9 +135,11 @@ This requires either a guest init script change or exposing the mount in the Fir
 
 | Feature | Impact | Current | What's Needed |
 |---------|--------|---------|---------------|
-| Landlock (securityfs) | Medium -- kernel-native file policy, faster than ptrace | Detected but not enforcing | Mount securityfs in VM guest |
+| Landlock (securityfs) | N/A -- already working | Active file protection backend (ABI v2) | N/A |
 | FUSE | Nice to have -- adds soft-delete quarantine, VFS overlay | Not available | Expose `/dev/fuse` in VM |
+| eBPF | Medium -- kernel network monitoring | Not available (missing CAP_BPF) | Run with elevated privileges or grant CAP_BPF |
 | Landlock network | Low -- kernel network policy | Not available (kernel 6.1) | Upgrade kernel to 6.7+ |
+| cgroups v2 | Low -- resource limits | Not available (cgroup v1) | Enable cgroups v2 in VM |
 | PID namespace | Low -- process isolation | Not available | Allow `CLONE_NEWPID` |
 
 ## Quick Start
@@ -199,15 +195,15 @@ sandbox.sh: /bin/bash -c "sudo whoami"
 
 Every command that Deno Sandbox's `sandbox.sh` executes is automatically intercepted -- no explicit `agentsh exec` calls needed. The bootstrap script (`setup.ts`) installs the shell shim and starts the agentsh server on port 18080.
 
-agentsh v0.16.6 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
+agentsh v0.16.8 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
 
-### v0.16.6 features
+### v0.16.8 features
 
 - **ptrace + seccomp file enforcement** -- kernel-level file policy enforcement without FUSE or Landlock. Uses ptrace to intercept file syscalls with seccomp BPF prefiltering for performance. TOCTOU-safe (thread is frozen during policy evaluation).
 - **`real_paths` mode** -- alternative to FUSE for transparent command interception. Renames original binaries and installs shims. Works in Firecracker where `/dev/fuse` is unavailable.
 - **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically. Works in both seccomp and ptrace modes.
 - **Seccomp prefilter injection** -- when ptrace is enabled, agentsh injects a seccomp BPF filter into each tracee so only traced syscalls (file, exec, network) trigger ptrace stops. Non-traced syscalls pass through at kernel speed.
-- **Version pinning** -- install script pins to a specific agentsh version (default: 0.16.6) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
+- **Version pinning** -- install script pins to a specific agentsh version (default: 0.16.8) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
 
 ## Configuration
 
@@ -241,7 +237,7 @@ The `test-template.ts` script creates a Deno Sandbox and runs 38 security tests 
 - **Installation** -- agentsh binary version check
 - **Server & config** -- health check, policy/config files, real_paths enabled, BASH_ENV configured
 - **Shell shim** -- shim binary, bash.real preserved, echo through shim
-- **Security diagnostics** -- agentsh detect: seccomp, cgroups_v2, landlock, ebpf
+- **Security diagnostics** -- agentsh detect: seccomp, ptrace, landlock available; capability domains reported
 - **Command blocking** -- sudo, su, ssh, kill, rm -rf blocked; echo, git allowed
 - **Network blocking** -- npmjs.org allowed; metadata, private networks blocked
 - **Environment policy** -- sensitive vars filtered, HOME/PATH present, BASH_ENV set, unlisted vars hidden

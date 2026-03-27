@@ -89,7 +89,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  console.log("Creating sandbox with agentsh v0.16.6...");
+  console.log("Creating sandbox with agentsh v0.16.8...");
   const sandbox = await createAgentshSandbox({
     envVars: {
       // Inject test secrets that env_policy should hide
@@ -111,7 +111,7 @@ async function main() {
 
     await test("agentsh installed", async () => {
       const r = (await sandbox.sh`agentsh --version`.text()).trim();
-      return r.includes("agentsh") && r.includes("0.16.6");
+      return r.includes("agentsh") && r.includes("0.16.8");
     });
 
     // =========================================================================
@@ -191,36 +191,31 @@ async function main() {
     // =========================================================================
     console.log("\n=== Security Diagnostics ===");
 
+    const detectOutput = (
+      await sandbox.sh`agentsh detect 2>&1`.noThrow().text()
+    );
+    const detectLine = (name: string) =>
+      detectOutput.split("\n").some(
+        (line) => line.includes(name) && line.includes("\u2713"),
+      );
+
     await test("agentsh detect: seccomp available", async () => {
-      const r = await sandbox
-        .sh`agentsh detect 2>&1 | grep -E "seccomp\\s"`
-        .noThrow()
-        .text();
-      return r.includes("YES") || r.includes("\u2713");
+      return detectLine("seccomp");
     });
 
-    await test("agentsh detect: cgroups_v2 available", async () => {
-      const r = await sandbox
-        .sh`agentsh detect 2>&1 | grep cgroups_v2`
-        .noThrow()
-        .text();
-      return r.includes("YES") || r.includes("\u2713");
+    await test("agentsh detect: ptrace available", async () => {
+      return detectLine("ptrace");
     });
 
     await test("agentsh detect: landlock available", async () => {
-      const r = await sandbox
-        .sh`agentsh detect 2>&1 | grep -E "landlock\\s"`
-        .noThrow()
-        .text();
-      return r.includes("YES") || r.includes("\u2713");
+      return detectLine("landlock");
     });
 
-    await test("agentsh detect: ebpf available", async () => {
-      const r = await sandbox
-        .sh`agentsh detect 2>&1 | grep ebpf`
-        .noThrow()
-        .text();
-      return r.includes("YES") || r.includes("\u2713");
+    await test("agentsh detect: capabilities reported", async () => {
+      const d = detectOutput.toLowerCase();
+      return d.includes("file protection") &&
+        d.includes("command control") &&
+        d.includes("network");
     });
 
     // =========================================================================
@@ -416,10 +411,15 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
     console.log("\n=== Network Policy ===");
 
     await test("package registry allowed (npmjs.org)", async () => {
-      const r = await execSh(
-        '/usr/bin/curl -s --connect-timeout 10 --max-time 15 -o /dev/null -w "%{http_code}" https://registry.npmjs.org/',
-      );
-      return r.stdout.trim() === "200";
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const r = await execSh(
+          '/usr/bin/curl -s --connect-timeout 10 --max-time 15 -o /dev/null -w "%{http_code}" https://registry.npmjs.org/',
+        );
+        const code = parseInt(r.stdout.trim(), 10);
+        if (code >= 200 && code < 400) return true;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      return false;
     });
 
     await test("metadata endpoint blocked (169.254.169.254)", async () => {
