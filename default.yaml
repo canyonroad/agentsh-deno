@@ -1,4 +1,4 @@
-# Agent Sandbox Policy for agentsh v0.16.9
+# Agent Sandbox Policy for agentsh v0.18.0
 # Maximum containment for running unknown/untrusted agent code
 
 version: 1
