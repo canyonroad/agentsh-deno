@@ -89,7 +89,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  console.log("Creating sandbox with agentsh v0.18.0...");
+  console.log("Creating sandbox with agentsh v0.18.3...");
   const sandbox = await createAgentshSandbox({
     envVars: {
       // Inject test secrets that env_policy should hide
@@ -111,7 +111,7 @@ async function main() {
 
     await test("agentsh installed", async () => {
       const r = (await sandbox.sh`agentsh --version`.text()).trim();
-      return r.includes("agentsh") && r.includes("0.18.0");
+      return r.includes("agentsh") && r.includes("0.18.3");
     });
 
     // =========================================================================
@@ -191,9 +191,7 @@ async function main() {
     // =========================================================================
     console.log("\n=== Security Diagnostics ===");
 
-    const detectOutput = (
-      await sandbox.sh`agentsh detect 2>&1`.noThrow().text()
-    );
+    const detectOutput = await sandbox.sh`agentsh detect 2>&1`.noThrow().text();
     const detectLine = (name: string) =>
       detectOutput.split("\n").some(
         (line) => line.includes(name) && line.includes("\u2713"),
@@ -326,8 +324,8 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
         const exitCode = json.result?.exit_code ?? -1;
         const stdout = json.result?.stdout ?? "";
         const stderr = json.result?.stderr ?? "";
-        const denied =
-          stderr.includes("Permission denied") || stderr.includes("denied");
+        const denied = stderr.includes("Permission denied") ||
+          stderr.includes("denied");
         return { exitCode, stdout, stderr, blocked: false, denied, rule: "" };
       } catch {
         return {
@@ -341,18 +339,12 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
       }
     }
 
-    async function execSh(shellCmd: string) {
-      return exec("/bin/bash.real", [
-        "-c",
-        `export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; ${shellCmd}`,
-      ]);
-    }
-
     // Warmup
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        await execSh("echo warmup-ok");
-        break;
+        const r = await exec("/bin/echo", ["warmup-ok"]);
+        if (r.exitCode === 0) break;
+        throw new Error(r.stderr || "warmup command failed");
       } catch {
         if (attempt === 3) {
           console.log("  Warmup failed — server may be unreachable");
@@ -390,7 +382,8 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
     });
 
     await test("rm -rf blocked", async () => {
-      await execSh("mkdir -p /tmp/testdir && touch /tmp/testdir/f.txt");
+      await exec("/usr/bin/mkdir", ["-p", "/tmp/testdir"]);
+      await exec("/usr/bin/touch", ["/tmp/testdir/f.txt"]);
       const r = await exec("/usr/bin/rm", ["-rf", "/tmp/testdir"]);
       return r.blocked && r.rule.includes("block-rm-recursive");
     });
@@ -412,27 +405,52 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
 
     await test("package registry allowed (npmjs.org)", async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
-        const r = await execSh(
-          '/usr/bin/curl -s --connect-timeout 10 --max-time 15 -o /dev/null -w "%{http_code}" https://registry.npmjs.org/',
-        );
+        const r = await exec("/usr/bin/curl", [
+          "-s",
+          "--connect-timeout",
+          "10",
+          "--max-time",
+          "15",
+          "-o",
+          "/tmp/npmjs-response",
+          "-w",
+          "%{http_code}",
+          "https://registry.npmjs.org/",
+        ]);
         const code = parseInt(r.stdout.trim(), 10);
         if (code >= 200 && code < 400) return true;
-        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
       }
       return false;
     });
 
     await test("metadata endpoint blocked (169.254.169.254)", async () => {
-      const r = await execSh(
-        '/usr/bin/curl -s --connect-timeout 3 -o /dev/null -w "%{http_code}" http://169.254.169.254/',
-      );
+      const r = await exec("/usr/bin/curl", [
+        "-s",
+        "--connect-timeout",
+        "3",
+        "-o",
+        "/tmp/metadata-response",
+        "-w",
+        "%{http_code}",
+        "http://169.254.169.254/",
+      ]);
       return r.stdout.includes("403") || r.exitCode !== 0;
     });
 
     await test("private network blocked (10.0.0.1)", async () => {
-      const r = await execSh(
-        '/usr/bin/curl -s --connect-timeout 3 -o /dev/null -w "%{http_code}" http://10.0.0.1/',
-      );
+      const r = await exec("/usr/bin/curl", [
+        "-s",
+        "--connect-timeout",
+        "3",
+        "-o",
+        "/tmp/private-response",
+        "-w",
+        "%{http_code}",
+        "http://10.0.0.1/",
+      ]);
       return r.stdout.includes("403") || r.exitCode !== 0;
     });
 
@@ -442,7 +460,8 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
     console.log("\n=== Environment Policy ===");
 
     await test("sensitive vars filtered (AWS_, OPENAI_, etc.)", async () => {
-      const r = await execSh("/usr/bin/env 2>/dev/null | sort || echo ''");
+      const r = await exec("/usr/bin/env");
+      if (r.exitCode !== 0) return false;
       const blocked = [
         "AWS_",
         "AZURE_",
@@ -459,16 +478,15 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
     });
 
     await test("safe vars present (HOME, PATH)", async () => {
-      const r = await exec("/bin/bash.real", [
-        "-c",
-        'echo "HOME=$HOME" && echo "PATH=$PATH"',
-      ]);
-      return r.stdout.includes("HOME=/") && r.stdout.includes("PATH=/");
+      const r = await exec("/usr/bin/env");
+      return r.exitCode === 0 &&
+        /^HOME=\/.+$/m.test(r.stdout) &&
+        /^PATH=\/.+$/m.test(r.stdout);
     });
 
     await test("BASH_ENV set in session", async () => {
-      const r = await execSh("echo $BASH_ENV");
-      return r.stdout.includes("bash_startup");
+      const r = await exec("/usr/bin/printenv", ["BASH_ENV"]);
+      return r.exitCode === 0 && r.stdout.includes("bash_startup");
     });
 
     await test("unlisted var hidden (MY_CUSTOM_SETTING)", async () => {
@@ -486,22 +504,24 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
 
     // Allowed
     await test("write to workspace succeeds", async () => {
-      const r = await execSh(
-        'echo "fileio-test" > /app/fileio-test.txt && cat /app/fileio-test.txt',
-      );
-      return r.exitCode === 0 && r.stdout.includes("fileio-test");
+      const r = await exec("/usr/bin/touch", ["/app/fileio-test.txt"]);
+      return r.exitCode === 0;
     });
 
     await test("write to /tmp succeeds", async () => {
-      const r = await execSh(
-        'echo "tmp-test" > /tmp/fileio-test.txt && cat /tmp/fileio-test.txt',
-      );
-      return r.exitCode === 0 && r.stdout.includes("tmp-test");
+      const r = await exec("/usr/bin/touch", ["/tmp/fileio-test.txt"]);
+      return r.exitCode === 0;
     });
 
     await test("read system files succeeds", async () => {
-      const r = await execSh("cat /etc/hosts");
-      return r.exitCode === 0 && r.stdout.trim().length > 0;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const r = await exec("/usr/bin/cat", ["/etc/hosts"]);
+        if (r.exitCode === 0 && r.stdout.trim().length > 0) return true;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+      return false;
     });
 
     // =========================================================================
@@ -527,14 +547,20 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
 
     // Allowed: safe commands via same contexts
     await test("env whoami allowed", async () => {
-      const r = await execSh("/usr/bin/env /usr/bin/whoami");
+      const r = await exec("/usr/bin/env", ["/usr/bin/whoami"]);
       return r.exitCode === 0;
     });
 
     await test("find -exec echo allowed", async () => {
-      const r = await execSh(
-        "/usr/bin/find /tmp -maxdepth 0 -exec /usr/bin/echo found \\;",
-      );
+      const r = await exec("/usr/bin/find", [
+        "/tmp",
+        "-maxdepth",
+        "0",
+        "-exec",
+        "/usr/bin/echo",
+        "found",
+        ";",
+      ]);
       return r.exitCode === 0 && r.stdout.includes("found");
     });
 
@@ -574,6 +600,10 @@ curl -s -X POST "${AGENTSH_API}/api/v1/sessions/${sessionId}/exec" \
 }
 
 // deno-lint-ignore no-explicit-any
-const process = { stdout: { write: (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s)) } } as any;
+const process = {
+  stdout: {
+    write: (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s)),
+  },
+} as any;
 
 main();

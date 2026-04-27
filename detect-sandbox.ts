@@ -1,13 +1,13 @@
 /**
  * detect-sandbox.ts -- Diagnostic script to verify whether FUSE, Landlock,
  * real_paths, and other kernel security features are actually working inside
- * the Deno sandbox running agentsh v0.18.0.
+ * the Deno sandbox running agentsh v0.18.3.
  *
  * Checks:
  *   1. `agentsh detect`       -- kernel feature detection summary
  *   2. `agentsh detect config` -- configuration-level detection (if available)
  *   3. Server log inspection   -- FUSE/Landlock/real_paths/BASH_ENV messages
- *   4. real_paths and BASH_ENV -- verify v0.18.0 features are active
+ *   4. real_paths and BASH_ENV -- verify v0.18.3 features are active
  *   5. Landlock enforcement    -- attempt to read a denied path via shim vs direct
  *   6. FUSE mount check        -- look for fuse mounts
  *   7. Cleanup
@@ -65,7 +65,9 @@ function subBanner(title: string): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  console.log("detect-sandbox.ts: Diagnosing FUSE, Landlock, and real_paths inside Deno sandbox\n");
+  console.log(
+    "detect-sandbox.ts: Diagnosing FUSE, Landlock, and real_paths inside Deno sandbox\n",
+  );
 
   const sandbox = await createAgentshSandbox();
 
@@ -84,7 +86,8 @@ async function main(): Promise<void> {
 
     subBanner("1b. agentsh detect -o json");
     try {
-      const detectJson = await sandbox.sh`agentsh detect -o json`.noThrow().text();
+      const detectJson = await sandbox.sh`agentsh detect -o json`.noThrow()
+        .text();
       console.log(detectJson);
     } catch (err) {
       console.log(`Error running 'agentsh detect -o json': ${err}`);
@@ -96,7 +99,8 @@ async function main(): Promise<void> {
     banner("2. agentsh detect config (configuration detection)");
 
     try {
-      const detectConfig = await sandbox.sh`agentsh detect config 2>&1`.noThrow().text();
+      const detectConfig = await sandbox.sh`agentsh detect config 2>&1`
+        .noThrow().text();
       console.log(detectConfig);
     } catch (err) {
       console.log(`Error or not available: ${err}`);
@@ -104,7 +108,8 @@ async function main(): Promise<void> {
 
     // Also try subcommand variants in case the CLI uses a different syntax
     try {
-      const detectConfig2 = await sandbox.sh`agentsh detect --config 2>&1`.noThrow().text();
+      const detectConfig2 = await sandbox.sh`agentsh detect --config 2>&1`
+        .noThrow().text();
       if (detectConfig2.trim()) {
         subBanner("2b. agentsh detect --config");
         console.log(detectConfig2);
@@ -120,7 +125,8 @@ async function main(): Promise<void> {
 
     subBanner("3a. Files in /var/log/agentsh/");
     try {
-      const logLs = await sandbox.sh`ls -la /var/log/agentsh/ 2>&1`.noThrow().text();
+      const logLs = await sandbox.sh`ls -la /var/log/agentsh/ 2>&1`.noThrow()
+        .text();
       console.log(logLs);
     } catch (err) {
       console.log(`Error listing log dir: ${err}`);
@@ -128,7 +134,9 @@ async function main(): Promise<void> {
 
     subBanner("3b. Searching logs for FUSE-related messages");
     try {
-      const fuseLogs = await sandbox.sh`grep -ri -E '(fuse|FUSE|Fuse)' /var/log/agentsh/ 2>&1 || echo "(no FUSE mentions found in log files)"`.noThrow().text();
+      const fuseLogs = await sandbox
+        .sh`grep -ri -E '(fuse|FUSE|Fuse)' /var/log/agentsh/ 2>&1 || echo "(no FUSE mentions found in log files)"`
+        .noThrow().text();
       console.log(fuseLogs);
     } catch (err) {
       console.log(`Error searching logs: ${err}`);
@@ -136,15 +144,21 @@ async function main(): Promise<void> {
 
     subBanner("3c. Searching logs for Landlock-related messages");
     try {
-      const landlockLogs = await sandbox.sh`grep -ri -E '(landlock|Landlock|LANDLOCK)' /var/log/agentsh/ 2>&1 || echo "(no Landlock mentions found in log files)"`.noThrow().text();
+      const landlockLogs = await sandbox
+        .sh`grep -ri -E '(landlock|Landlock|LANDLOCK)' /var/log/agentsh/ 2>&1 || echo "(no Landlock mentions found in log files)"`
+        .noThrow().text();
       console.log(landlockLogs);
     } catch (err) {
       console.log(`Error searching logs: ${err}`);
     }
 
-    subBanner("3d. Searching logs for sandbox/security/degraded/real_paths messages");
+    subBanner(
+      "3d. Searching logs for sandbox/security/degraded/real_paths messages",
+    );
     try {
-      const sandboxLogs = await sandbox.sh`grep -ri -E '(sandbox|security|degraded|seccomp|cgroup|enforce|real_paths|real.paths|bash_env|env_inject|transparent)' /var/log/agentsh/ 2>&1 || echo "(no sandbox-related mentions found)"`.noThrow().text();
+      const sandboxLogs = await sandbox
+        .sh`grep -ri -E '(sandbox|security|degraded|seccomp|cgroup|enforce|real_paths|real.paths|bash_env|env_inject|transparent)' /var/log/agentsh/ 2>&1 || echo "(no sandbox-related mentions found)"`
+        .noThrow().text();
       console.log(sandboxLogs);
     } catch (err) {
       console.log(`Error searching logs: ${err}`);
@@ -153,20 +167,23 @@ async function main(): Promise<void> {
     // Also check stderr from the server process (agentsh logs to stderr)
     subBanner("3e. Checking dmesg for FUSE/Landlock kernel messages");
     try {
-      const dmesg = await sandbox.sh`dmesg 2>&1 | grep -iE '(fuse|landlock)' || echo "(no FUSE/Landlock messages in dmesg, or dmesg not available)"`.noThrow().text();
+      const dmesg = await sandbox
+        .sh`dmesg 2>&1 | grep -iE '(fuse|landlock)' || echo "(no FUSE/Landlock messages in dmesg, or dmesg not available)"`
+        .noThrow().text();
       console.log(dmesg);
     } catch (err) {
       console.log(`Error checking dmesg: ${err}`);
     }
 
     // =====================================================================
-    // 3f. v0.18.0 features: real_paths mode and BASH_ENV injection
+    // 3f. v0.18.3 features: real_paths mode and BASH_ENV injection
     // =====================================================================
-    banner("3f. v0.18.0 features (real_paths, BASH_ENV)");
+    banner("3f. v0.18.3 features (real_paths, BASH_ENV)");
 
     subBanner("3f-i. Check if BASH_ENV is set in the shell environment");
     try {
-      const bashEnv = await sandbox.sh`echo "BASH_ENV=$BASH_ENV"`.noThrow().text();
+      const bashEnv = await sandbox.sh`echo "BASH_ENV=$BASH_ENV"`.noThrow()
+        .text();
       console.log(`  ${bashEnv.trim()}`);
       if (bashEnv.includes("/usr/lib/agentsh/bash_startup.sh")) {
         console.log("  -> BASH_ENV injection is ACTIVE");
@@ -179,7 +196,9 @@ async function main(): Promise<void> {
 
     subBanner("3f-ii. Check if bash_startup.sh exists");
     try {
-      const startupSh = await sandbox.sh`ls -la /usr/lib/agentsh/bash_startup.sh 2>&1 || echo "(file does not exist)"`.noThrow().text();
+      const startupSh = await sandbox
+        .sh`ls -la /usr/lib/agentsh/bash_startup.sh 2>&1 || echo "(file does not exist)"`
+        .noThrow().text();
       console.log(`  ${startupSh.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -187,14 +206,18 @@ async function main(): Promise<void> {
 
     subBanner("3f-iii. Check for real_paths mode in server config/logs");
     try {
-      const realPathsConfig = await sandbox.sh`grep -i real_paths /etc/agentsh/config.yaml 2>&1 || echo "(real_paths not found in config)"`.noThrow().text();
+      const realPathsConfig = await sandbox
+        .sh`grep -i real_paths /etc/agentsh/config.yaml 2>&1 || echo "(real_paths not found in config)"`
+        .noThrow().text();
       console.log(`  Config: ${realPathsConfig.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
     }
 
     try {
-      const realPathsLogs = await sandbox.sh`grep -ri -E '(real.?paths|transparent.?command)' /var/log/agentsh/ 2>&1 || echo "(no real_paths mentions in logs)"`.noThrow().text();
+      const realPathsLogs = await sandbox
+        .sh`grep -ri -E '(real.?paths|transparent.?command)' /var/log/agentsh/ 2>&1 || echo "(no real_paths mentions in logs)"`
+        .noThrow().text();
       console.log(`  Logs: ${realPathsLogs.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -202,7 +225,9 @@ async function main(): Promise<void> {
 
     subBanner("3f-iv. Check for .real binaries (real_paths mode indicator)");
     try {
-      const realBinaries = await sandbox.sh`ls -la /bin/bash.real /bin/sh.real /usr/bin/bash.real /usr/bin/sh.real 2>&1 || echo "(no .real binaries found)"`.noThrow().text();
+      const realBinaries = await sandbox
+        .sh`ls -la /bin/bash.real /bin/sh.real /usr/bin/bash.real /usr/bin/sh.real 2>&1 || echo "(no .real binaries found)"`
+        .noThrow().text();
       console.log(`  ${realBinaries.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -216,7 +241,8 @@ async function main(): Promise<void> {
     // Create a session so we can test file access through the exec API
     // (which goes through the shell shim and agentsh policy enforcement)
     console.log("Creating agentsh session for enforcement tests...");
-    const sessionText = await sandbox.sh`agentsh session create --workspace /app --json`.text();
+    const sessionText = await sandbox
+      .sh`agentsh session create --workspace /app --json`.text();
     const sessionOutput: SessionCreateResponse = JSON.parse(sessionText.trim());
     const sessionId: string = sessionOutput.id;
     console.log(`Session ID: ${sessionId}`);
@@ -230,7 +256,15 @@ async function main(): Promise<void> {
     async function execViaApi(
       command: string,
       args: string[],
-    ): Promise<{ exitCode: number; stdout: string; stderr: string; blocked: boolean; policyRule: string }> {
+    ): Promise<
+      {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        blocked: boolean;
+        policyRule: string;
+      }
+    > {
       const payload = JSON.stringify({ command, args });
       const escapedPayload = payload.replace(/'/g, "'\\''");
 
@@ -253,7 +287,13 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
       try {
         output = await sandbox.fs.readTextFile("/tmp/exec-result.json");
       } catch {
-        return { exitCode: -1, stdout: "", stderr: "no API response", blocked: false, policyRule: "" };
+        return {
+          exitCode: -1,
+          stdout: "",
+          stderr: "no API response",
+          blocked: false,
+          policyRule: "",
+        };
       }
 
       try {
@@ -261,12 +301,24 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
         if (json.result?.error?.code === "E_POLICY_DENIED") {
           const rule = json.result.error.policy_rule ?? "unknown";
-          return { exitCode: -1, stdout: "", stderr: json.result.error.message ?? "", blocked: true, policyRule: rule };
+          return {
+            exitCode: -1,
+            stdout: "",
+            stderr: json.result.error.message ?? "",
+            blocked: true,
+            policyRule: rule,
+          };
         }
 
         if (json.guidance?.blocked || json.guidance?.status === "blocked") {
           const rule = json.guidance?.policy_rule ?? "unknown";
-          return { exitCode: -1, stdout: "", stderr: json.guidance?.reason ?? "", blocked: true, policyRule: rule };
+          return {
+            exitCode: -1,
+            stdout: "",
+            stderr: json.guidance?.reason ?? "",
+            blocked: true,
+            policyRule: rule,
+          };
         }
 
         const exitCode = json.result?.exit_code ?? -1;
@@ -274,7 +326,13 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
         const stderr = json.result?.stderr?.trim() ?? "";
         return { exitCode, stdout, stderr, blocked: false, policyRule: "" };
       } catch {
-        return { exitCode: -1, stdout: "", stderr: `parse error: ${output.slice(0, 200)}`, blocked: false, policyRule: "" };
+        return {
+          exitCode: -1,
+          stdout: "",
+          stderr: `parse error: ${output.slice(0, 200)}`,
+          blocked: false,
+          policyRule: "",
+        };
       }
     }
 
@@ -284,12 +342,22 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
       const result = await execViaApi("/bin/cat", ["/etc/shadow"]);
       if (result.blocked) {
         console.log(`  BLOCKED by policy: ${result.policyRule}`);
-        console.log("  -> Landlock/policy enforcement is WORKING for /etc/shadow");
+        console.log(
+          "  -> Landlock/policy enforcement is WORKING for /etc/shadow",
+        );
       } else if (result.exitCode !== 0) {
-        console.log(`  Command failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
-        console.log("  -> File access was denied (may be OS-level or Landlock)");
+        console.log(
+          `  Command failed (exit ${result.exitCode}): ${
+            result.stderr.slice(0, 200)
+          }`,
+        );
+        console.log(
+          "  -> File access was denied (may be OS-level or Landlock)",
+        );
       } else {
-        console.log(`  WARNING: /etc/shadow was readable! stdout length: ${result.stdout.length}`);
+        console.log(
+          `  WARNING: /etc/shadow was readable! stdout length: ${result.stdout.length}`,
+        );
         console.log("  -> Landlock may NOT be enforcing file restrictions");
       }
     }
@@ -297,14 +365,22 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
     // -- 4b. Read /etc/shadow directly (bypassing agentsh shim) --
     subBanner("4b. Read /etc/shadow DIRECTLY (bypassing shim, via sandbox.sh)");
     try {
-      const directResult = await sandbox.sh`/bin/sh -c 'cat /etc/shadow 2>&1'`.noThrow().text();
-      if (directResult.includes("Permission denied") || directResult.includes("No such file")) {
+      const directResult = await sandbox.sh`/bin/sh -c 'cat /etc/shadow 2>&1'`
+        .noThrow().text();
+      if (
+        directResult.includes("Permission denied") ||
+        directResult.includes("No such file")
+      ) {
         console.log(`  Direct read denied: ${directResult.trim()}`);
         console.log("  -> OS/Landlock-level protection is in effect");
       } else if (directResult.trim().length === 0) {
-        console.log("  Direct read returned empty (file may not exist or is empty)");
+        console.log(
+          "  Direct read returned empty (file may not exist or is empty)",
+        );
       } else {
-        console.log(`  WARNING: /etc/shadow was directly readable! (${directResult.length} bytes)`);
+        console.log(
+          `  WARNING: /etc/shadow was directly readable! (${directResult.length} bytes)`,
+        );
         console.log("  -> Landlock is NOT enforcing at the kernel level");
       }
     } catch (err) {
@@ -313,57 +389,93 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
     }
 
     // -- 4c. Read /etc/passwd via exec API (also should be denied by policy) --
-    subBanner("4c. Read /etc/passwd via agentsh exec API (should be DENIED by default-deny-files)");
+    subBanner(
+      "4c. Read /etc/passwd via agentsh exec API (should be DENIED by default-deny-files)",
+    );
     {
       const result = await execViaApi("/bin/cat", ["/etc/passwd"]);
       if (result.blocked) {
         console.log(`  BLOCKED by policy: ${result.policyRule}`);
         console.log("  -> Policy enforcement is WORKING for /etc/passwd");
       } else if (result.exitCode !== 0) {
-        console.log(`  Command failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
+        console.log(
+          `  Command failed (exit ${result.exitCode}): ${
+            result.stderr.slice(0, 200)
+          }`,
+        );
         console.log("  -> File access was denied");
       } else {
-        console.log(`  /etc/passwd was readable (${result.stdout.split("\n").length} lines)`);
-        console.log("  -> Policy may allow /etc/passwd or Landlock is not restricting it");
-        console.log(`  First 3 lines: ${result.stdout.split("\n").slice(0, 3).join(" | ")}`);
+        console.log(
+          `  /etc/passwd was readable (${
+            result.stdout.split("\n").length
+          } lines)`,
+        );
+        console.log(
+          "  -> Policy may allow /etc/passwd or Landlock is not restricting it",
+        );
+        console.log(
+          `  First 3 lines: ${
+            result.stdout.split("\n").slice(0, 3).join(" | ")
+          }`,
+        );
       }
     }
 
     // -- 4d. Read /etc/passwd directly (bypassing shim) --
     subBanner("4d. Read /etc/passwd DIRECTLY (bypassing shim)");
     try {
-      const directPasswd = await sandbox.sh`/bin/sh -c 'cat /etc/passwd 2>&1'`.noThrow().text();
+      const directPasswd = await sandbox.sh`/bin/sh -c 'cat /etc/passwd 2>&1'`
+        .noThrow().text();
       const lines = directPasswd.trim().split("\n");
       console.log(`  Direct read returned ${lines.length} lines`);
       console.log(`  First 3 lines: ${lines.slice(0, 3).join(" | ")}`);
-      console.log("  -> Compare with exec API result above to see if policy adds restrictions");
+      console.log(
+        "  -> Compare with exec API result above to see if policy adds restrictions",
+      );
     } catch (err) {
       console.log(`  Direct read threw error: ${err}`);
     }
 
     // -- 4e. Read /root/.ssh (should be approval-required or denied) --
-    subBanner("4e. Read /root/.ssh/ via agentsh exec API (should be APPROVE or DENY)");
+    subBanner(
+      "4e. Read /root/.ssh/ via agentsh exec API (should be APPROVE or DENY)",
+    );
     {
       const result = await execViaApi("/bin/ls", ["-la", "/root/.ssh/"]);
       if (result.blocked) {
         console.log(`  BLOCKED by policy: ${result.policyRule}`);
         console.log("  -> Credential path protection is WORKING");
       } else if (result.exitCode !== 0) {
-        console.log(`  Command failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
+        console.log(
+          `  Command failed (exit ${result.exitCode}): ${
+            result.stderr.slice(0, 200)
+          }`,
+        );
       } else {
-        console.log(`  WARNING: /root/.ssh/ was listed: ${result.stdout.slice(0, 200)}`);
+        console.log(
+          `  WARNING: /root/.ssh/ was listed: ${result.stdout.slice(0, 200)}`,
+        );
       }
     }
 
     // -- 4f. Write to a denied path --
-    subBanner("4f. Write to /etc/test-write via agentsh exec API (should be DENIED)");
+    subBanner(
+      "4f. Write to /etc/test-write via agentsh exec API (should be DENIED)",
+    );
     {
-      const result = await execViaApi("/bin/sh", ["-c", "echo test > /etc/test-write"]);
+      const result = await execViaApi("/bin/sh", [
+        "-c",
+        "echo test > /etc/test-write",
+      ]);
       if (result.blocked) {
         console.log(`  BLOCKED by policy: ${result.policyRule}`);
         console.log("  -> Write protection is WORKING");
       } else if (result.exitCode !== 0) {
-        console.log(`  Command failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
+        console.log(
+          `  Command failed (exit ${result.exitCode}): ${
+            result.stderr.slice(0, 200)
+          }`,
+        );
         console.log("  -> Write was denied (OS-level or policy)");
       } else {
         console.log("  WARNING: write to /etc/ succeeded!");
@@ -372,9 +484,14 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
     }
 
     // -- 4g. Write to workspace (should be ALLOWED) --
-    subBanner("4g. Write to /app/test-allowed.txt via exec API (should be ALLOWED)");
+    subBanner(
+      "4g. Write to /app/test-allowed.txt via exec API (should be ALLOWED)",
+    );
     {
-      const result = await execViaApi("/bin/sh", ["-c", "echo 'sandbox test' > /app/test-allowed.txt && cat /app/test-allowed.txt"]);
+      const result = await execViaApi("/bin/sh", [
+        "-c",
+        "echo 'sandbox test' > /app/test-allowed.txt && cat /app/test-allowed.txt",
+      ]);
       if (result.blocked) {
         console.log(`  BLOCKED by policy: ${result.policyRule}`);
         console.log("  -> Unexpected: workspace writes should be allowed");
@@ -382,7 +499,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
         console.log(`  Success: ${result.stdout}`);
         console.log("  -> Workspace write is correctly ALLOWED");
       } else {
-        console.log(`  Failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`);
+        console.log(
+          `  Failed (exit ${result.exitCode}): ${result.stderr.slice(0, 200)}`,
+        );
       }
     }
 
@@ -393,7 +512,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("5a. Check /proc/mounts for fuse");
     try {
-      const procMounts = await sandbox.sh`grep -i fuse /proc/mounts 2>&1 || echo "(no FUSE mounts found in /proc/mounts)"`.noThrow().text();
+      const procMounts = await sandbox
+        .sh`grep -i fuse /proc/mounts 2>&1 || echo "(no FUSE mounts found in /proc/mounts)"`
+        .noThrow().text();
       console.log(procMounts);
     } catch (err) {
       console.log(`Error checking /proc/mounts: ${err}`);
@@ -401,7 +522,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("5b. mount | grep fuse");
     try {
-      const mountGrep = await sandbox.sh`mount 2>&1 | grep -i fuse || echo "(no FUSE mounts found via mount command)"`.noThrow().text();
+      const mountGrep = await sandbox
+        .sh`mount 2>&1 | grep -i fuse || echo "(no FUSE mounts found via mount command)"`
+        .noThrow().text();
       console.log(mountGrep);
     } catch (err) {
       console.log(`Error running mount: ${err}`);
@@ -409,7 +532,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("5c. Check /proc/filesystems for fuse support");
     try {
-      const fsTypes = await sandbox.sh`grep -i fuse /proc/filesystems 2>&1 || echo "(FUSE not listed in /proc/filesystems)"`.noThrow().text();
+      const fsTypes = await sandbox
+        .sh`grep -i fuse /proc/filesystems 2>&1 || echo "(FUSE not listed in /proc/filesystems)"`
+        .noThrow().text();
       console.log(fsTypes);
     } catch (err) {
       console.log(`Error checking /proc/filesystems: ${err}`);
@@ -417,7 +542,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("5d. Check /dev/fuse device");
     try {
-      const devFuse = await sandbox.sh`ls -la /dev/fuse 2>&1 || echo "(/dev/fuse does not exist)"`.noThrow().text();
+      const devFuse = await sandbox
+        .sh`ls -la /dev/fuse 2>&1 || echo "(/dev/fuse does not exist)"`
+        .noThrow().text();
       console.log(devFuse);
     } catch (err) {
       console.log(`Error checking /dev/fuse: ${err}`);
@@ -425,7 +552,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("5e. Check if fusermount is available");
     try {
-      const fusermount = await sandbox.sh`which fusermount 2>&1 || which fusermount3 2>&1 || echo "(fusermount not found)"`.noThrow().text();
+      const fusermount = await sandbox
+        .sh`which fusermount 2>&1 || which fusermount3 2>&1 || echo "(fusermount not found)"`
+        .noThrow().text();
       console.log(fusermount);
     } catch (err) {
       console.log(`Error checking fusermount: ${err}`);
@@ -444,9 +573,13 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
       console.log(`Error: ${err}`);
     }
 
-    subBanner("6b. Landlock ABI version (/sys/kernel/security/landlock/abi_version)");
+    subBanner(
+      "6b. Landlock ABI version (/sys/kernel/security/landlock/abi_version)",
+    );
     try {
-      const landlockAbi = await sandbox.sh`cat /sys/kernel/security/landlock/abi_version 2>&1 || echo "(not available -- Landlock may not be enabled in kernel)"`.noThrow().text();
+      const landlockAbi = await sandbox
+        .sh`cat /sys/kernel/security/landlock/abi_version 2>&1 || echo "(not available -- Landlock may not be enabled in kernel)"`
+        .noThrow().text();
       console.log(`  Landlock ABI version: ${landlockAbi.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -454,7 +587,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("6c. Seccomp status");
     try {
-      const seccomp = await sandbox.sh`grep -i seccomp /proc/self/status 2>&1 || echo "(seccomp info not available)"`.noThrow().text();
+      const seccomp = await sandbox
+        .sh`grep -i seccomp /proc/self/status 2>&1 || echo "(seccomp info not available)"`
+        .noThrow().text();
       console.log(seccomp);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -462,7 +597,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("6d. Cgroups");
     try {
-      const cgroups = await sandbox.sh`cat /proc/self/cgroup 2>&1 || echo "(cgroup info not available)"`.noThrow().text();
+      const cgroups = await sandbox
+        .sh`cat /proc/self/cgroup 2>&1 || echo "(cgroup info not available)"`
+        .noThrow().text();
       console.log(cgroups);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -470,7 +607,9 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("6e. Capabilities");
     try {
-      const caps = await sandbox.sh`grep -i cap /proc/self/status 2>&1 || echo "(capability info not available)"`.noThrow().text();
+      const caps = await sandbox
+        .sh`grep -i cap /proc/self/status 2>&1 || echo "(capability info not available)"`
+        .noThrow().text();
       console.log(caps);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -478,7 +617,8 @@ curl -s -X POST "${apiBase}/api/v1/sessions/${sessionId}/exec" \
 
     subBanner("6f. agentsh server status (health check)");
     try {
-      const health = await sandbox.sh`curl -s http://127.0.0.1:18080/health 2>&1`.noThrow().text();
+      const health = await sandbox
+        .sh`curl -s http://127.0.0.1:18080/health 2>&1`.noThrow().text();
       console.log(`  Health: ${health.trim()}`);
     } catch (err) {
       console.log(`Error: ${err}`);
@@ -498,7 +638,6 @@ Review the output above to determine:
   - Whether the policy layer (agentsh exec API) adds file restrictions
     even if Landlock is not available at the kernel level
 `);
-
   } finally {
     console.log("Cleaning up sandbox...");
     await sandbox.close();

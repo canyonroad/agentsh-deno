@@ -1,6 +1,6 @@
 # agentsh + Deno Sandbox
 
-Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.18.0 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
+Runtime security governance for AI agents using [agentsh](https://github.com/canyonroad/agentsh) v0.18.3 with [Deno Deploy Sandboxes](https://deno.com/deploy/sandboxes) (Firecracker microVMs).
 
 ## Why agentsh + Deno Sandbox?
 
@@ -51,7 +51,7 @@ agentsh adds the governance layer that controls what agents can do inside the sa
 
 ## Security Enforcement
 
-agentsh v0.18.0 uses **ptrace with seccomp prefiltering** to enforce all policy dimensions at the kernel level:
+agentsh v0.18.3 uses **ptrace with seccomp prefiltering** to enforce all policy dimensions at the kernel level:
 
 | Policy Dimension | Enforcement Mechanism | What It Does |
 |---|---|---|
@@ -93,7 +93,7 @@ The features below are optional enhancements, not requirements.
 
 ### Landlock (`/sys/kernel/security/landlock/`) -- Working
 
-**Current state**: Landlock v2 is the **active file protection backend** in v0.18.0. agentsh uses Landlock for kernel-native path restrictions, with seccomp-notify as a secondary enforcement layer.
+**Current state**: Landlock v2 is the **active file protection backend** in v0.18.3. agentsh uses Landlock for kernel-native path restrictions, with seccomp-notify as a secondary enforcement layer.
 
 **What it provides**:
 - **Kernel-native file policy** -- Landlock is an LSM (Linux Security Module) that enforces file access rules directly in the kernel, with zero userspace overhead per syscall.
@@ -195,15 +195,15 @@ sandbox.sh: /bin/bash -c "sudo whoami"
 
 Every command that Deno Sandbox's `sandbox.sh` executes is automatically intercepted -- no explicit `agentsh exec` calls needed. The bootstrap script (`setup.ts`) installs the shell shim and starts the agentsh server on port 18080.
 
-agentsh v0.18.0 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
+agentsh v0.18.3 uses `real_paths` mode as an alternative to FUSE in Firecracker (where `/dev/fuse` is unavailable). This renames original binaries (e.g., `/bin/bash` -> `/bin/bash.real`) and installs shims for transparent command interception.
 
-### v0.18.0 features
+### v0.18.3 features
 
 - **ptrace + seccomp file enforcement** -- kernel-level file policy enforcement without FUSE or Landlock. Uses ptrace to intercept file syscalls with seccomp BPF prefiltering for performance. TOCTOU-safe (thread is frozen during policy evaluation).
 - **`real_paths` mode** -- alternative to FUSE for transparent command interception. Renames original binaries and installs shims. Works in Firecracker where `/dev/fuse` is unavailable.
 - **`BASH_ENV` injection** -- sets `BASH_ENV=/usr/lib/agentsh/bash_startup.sh` so agentsh hooks into every bash session automatically. Works in both seccomp and ptrace modes.
 - **Seccomp prefilter injection** -- when ptrace is enabled, agentsh injects a seccomp BPF filter into each tracee so only traced syscalls (file, exec, network) trigger ptrace stops. Non-traced syscalls pass through at kernel speed.
-- **Version pinning** -- install script pins to a specific agentsh version (default: 0.18.0) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
+- **Version pinning** -- install script pins to a specific agentsh version (default: 0.18.3) instead of fetching `latest` from the GitHub API, removing the `jq` dependency.
 
 ## Configuration
 

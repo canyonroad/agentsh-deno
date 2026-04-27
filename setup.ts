@@ -13,11 +13,11 @@ import { Sandbox } from "@deno/sandbox";
 // ---------------------------------------------------------------------------
 
 export interface AgentshSandboxOptions {
-  /** GitHub repo for agentsh releases. Default: "erans/agentsh" */
+  /** GitHub repo for agentsh releases. Default: "canyonroad/agentsh" */
   agentshRepo?: string;
   /** Architecture for .deb package. Default: "amd64" */
   debArch?: string;
-  /** agentsh version to install. Default: "0.18.0" */
+  /** agentsh version to install. Default: "0.18.3" */
   agentshVersion?: string;
   /** Workspace path inside sandbox. Default: "/app" */
   workspace?: string;
@@ -49,9 +49,9 @@ export interface AgentshSandboxOptions {
 export async function createAgentshSandbox(
   opts?: AgentshSandboxOptions,
 ): Promise<Sandbox> {
-  const repo = opts?.agentshRepo ?? "erans/agentsh";
+  const repo = opts?.agentshRepo ?? "canyonroad/agentsh";
   const arch = opts?.debArch ?? "amd64";
-  const version = opts?.agentshVersion ?? "0.18.0";
+  const version = opts?.agentshVersion ?? "0.18.3";
   const workspace = opts?.workspace ?? "/app";
 
   // -------------------------------------------------------------------------
@@ -77,7 +77,9 @@ export async function createAgentshSandbox(
     console.log("Installing system dependencies...");
     await sandbox.sh`mkdir -p /var/lib/apt/lists/partial`.sudo();
     await sandbox.sh`apt-get -o Acquire::Check-Valid-Until=false update`.sudo();
-    await sandbox.sh`apt-get install -y --no-install-recommends ca-certificates curl libseccomp2 sudo`.sudo();
+    await sandbox
+      .sh`apt-get install -y --no-install-recommends ca-certificates curl libseccomp2 sudo`
+      .sudo();
     await sandbox.sh`rm -rf /var/lib/apt/lists/*`.sudo();
 
     // -----------------------------------------------------------------------
@@ -105,12 +107,19 @@ agentsh --version
     // 4. Create required directories and set ownership
     // -----------------------------------------------------------------------
     console.log("Creating directories...");
-    await sandbox.sh`mkdir -p /etc/agentsh/policies /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh ${workspace}`.sudo();
-    await sandbox.sh`chmod 755 /etc/agentsh /etc/agentsh/policies /var/lib/agentsh /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh`.sudo();
+    await sandbox
+      .sh`mkdir -p /etc/agentsh/policies /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh ${workspace}`
+      .sudo();
+    await sandbox
+      .sh`chmod 755 /etc/agentsh /etc/agentsh/policies /var/lib/agentsh /var/lib/agentsh/quarantine /var/lib/agentsh/sessions /var/log/agentsh`
+      .sudo();
 
     console.log("Setting permissions...");
-    await sandbox.sh`chown -R ${sbUser}:${sbGroup} /var/lib/agentsh /var/log/agentsh /etc/agentsh ${workspace}`.sudo();
-    await sandbox.sh`echo "${sbUser} ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers > /dev/null`;
+    await sandbox
+      .sh`chown -R ${sbUser}:${sbGroup} /var/lib/agentsh /var/log/agentsh /etc/agentsh ${workspace}`
+      .sudo();
+    await sandbox
+      .sh`echo "${sbUser} ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers > /dev/null`;
 
     // -----------------------------------------------------------------------
     // 5. Write config and policy YAML files into the sandbox
@@ -149,7 +158,8 @@ agentsh --version
     sandbox.sh`agentsh server`.sudo().spawn();
 
     console.log("Waiting for agentsh server to be ready...");
-    await sandbox.sh`for i in $(seq 1 30); do if curl -sf http://127.0.0.1:18080/health > /dev/null 2>&1; then echo "agentsh server ready"; exit 0; fi; sleep 0.5; done; echo "agentsh server failed to start within 15s" >&2; exit 1`;
+    await sandbox
+      .sh`for i in $(seq 1 30); do if curl -sf http://127.0.0.1:18080/health > /dev/null 2>&1; then echo "agentsh server ready"; exit 0; fi; sleep 0.5; done; echo "agentsh server failed to start within 15s" >&2; exit 1`;
 
     // -----------------------------------------------------------------------
     // 8. Install the shell shim (replaces /bin/bash with agentsh-shell-shim)
@@ -158,7 +168,9 @@ agentsh --version
     // through agentsh for policy enforcement.
     // -----------------------------------------------------------------------
     console.log("Installing shell shim...");
-    await sandbox.sh`agentsh shim install-shell --root / --shim /usr/bin/agentsh-shell-shim --bash --i-understand-this-modifies-the-host`.sudo();
+    await sandbox
+      .sh`agentsh shim install-shell --root / --shim /usr/bin/agentsh-shell-shim --bash --i-understand-this-modifies-the-host`
+      .sudo();
 
     console.log("agentsh sandbox ready.");
     return sandbox;
